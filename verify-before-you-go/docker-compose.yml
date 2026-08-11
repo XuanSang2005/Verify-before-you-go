@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:18.0-alpine
+    container_name: vbyg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-verify_before_you_go}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-verify_before_you_go}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - vbyg_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  vbyg_postgres_data:

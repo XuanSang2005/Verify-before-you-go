@@ -1,0 +1,23 @@
+{
+  "name": "verify-before-you-go",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=24 <25" },
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names backend,frontend --prefix-colors blue,magenta \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:frontend": "npm run start --workspace @vbyg/frontend",
+    "dev:backend": "npm run dev --workspace @vbyg/backend",
+    "web": "npm run web --workspace @vbyg/frontend",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace @vbyg/backend",
+    "db:validate": "npm run db:validate --workspace @vbyg/backend",
+    "db:migrate": "npm run db:migrate --workspace @vbyg/backend",
+    "db:seed": "npm run db:seed --workspace @vbyg/backend",
+    "export:web": "npm run export:web --workspace @vbyg/frontend",
+    "postinstall": "npm run db:generate"
+  },
+  "devDependencies": { "concurrently": "^10.0.4" }
+}

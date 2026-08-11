@@ -1,0 +1,13 @@
+node_modules/
+.DS_Store
+*.log
+.env
+.env.local
+!.env.example
+apps/frontend/.expo/
+apps/frontend/dist/
+apps/frontend/web-build/
+apps/backend/dist/
+apps/backend/.local-storage/
+apps/backend/src/generated/
+coverage/
