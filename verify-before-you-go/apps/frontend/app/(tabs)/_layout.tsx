@@ -102,6 +102,10 @@ export default function TabLayout() {
         name="reports"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="share"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }

@@ -98,3 +98,9 @@ The confirmed `/reports/receipt` screen shows the real report ID, submission tim
 `REPORT_SECURITY_SECRET` must be a unique base64url-encoded secret containing at least 32 random bytes. Generate one for each local environment with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`; do not copy the `.env.example` value into a deployed environment.
 
 CP11 submits structured facts and permissions. Images selected in CP10 remain in the device-local private draft and are not uploaded yet. No report is reviewed, verified, included in an alert or published automatically.
+
+## CP12 privacy-safe sharing
+
+Open `/share/preview` after a transient analysis to share an allowlisted summary of observed signal categories. The app never adds the recruitment posting, marked evidence, screenshot, screenshot metadata, full identifier, private report, case ID or recovery key to the shared text or recipient URL. A direct refresh without transient analysis shows the clearly labelled Screen 14 demo.
+
+“Share privately” opens the native share sheet in Expo Go and uses Web Share in supporting browsers. Web browsers without Web Share copy the privacy-safe summary and recipient link instead; “Copy summary” is always available as an explicit fallback. Recipient links open `/share/recipient` and contain only schema version, allowlisted signal IDs, demo state and an expiry timestamp. CP12 creates no backend endpoint and no local persistence. Expo Go development links are LAN-bound and can change when Wi-Fi changes; production sharing needs a deployed universal/app link.
