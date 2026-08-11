@@ -13,7 +13,7 @@ export function sharePrivateSummaryWithRuntime(bundle: PrivateShareBundle): Prom
   return sharePrivateSummary(bundle, createRuntimeShareAdapters());
 }
 
-export function copyPrivateSummaryWithRuntime(bundle: PrivateShareBundle): Promise<void> {
+export function copyPrivateSummaryWithRuntime(bundle: PrivateShareBundle): Promise<'copied' | 'copied-text-only'> {
   return copyPrivateSummary(bundle, Clipboard.setStringAsync);
 }
 

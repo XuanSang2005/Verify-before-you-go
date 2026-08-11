@@ -1,16 +1,21 @@
-import { act, type ReactNode } from 'react';
+import { act, cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SharePreviewExperience } from './SharePreviewScreen';
-import { ShareRecipientExperience } from './ShareRecipientScreen';
-import { createSafeShareSummary } from './share-model';
+import { ShareRecipientController, ShareRecipientExperience } from './ShareRecipientScreen';
+import { createSafeShareSummary, toVerifiedSafeShareSummary } from './share-model';
+import { ShareTokenApiError } from '@/api/share';
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: function MockIonicons() { return null; },
 }));
 
 vi.mock('expo-router', () => ({
+  Link: function MockLink({ children, href }: { children: ReactElement; href: string }) {
+    if (!isValidElement(children)) return children;
+    return cloneElement(children as ReactElement<{ href?: string }>, { href });
+  },
   router: {
     back: vi.fn(),
     canGoBack: () => false,
@@ -38,7 +43,13 @@ vi.mock('react-native-safe-area-context', () => ({
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const summary = createSafeShareSummary(undefined, Date.UTC(2026, 7, 11));
+const summary = createSafeShareSummary(undefined);
+const recipientSummary = toVerifiedSafeShareSummary({
+  ...summary,
+  issuedAt: '2026-08-11T12:00:00.000Z',
+  expiresAt: '2026-08-18T12:00:00.000Z',
+});
+const TOKEN_A = `v1.${'a'.repeat(80)}.${'b'.repeat(43)}`;
 
 async function render(element: ReactNode) {
   const container = document.createElement('div');
@@ -58,7 +69,7 @@ describe('CP12 rendered privacy-safe sharing', () => {
     const harness = await render(
       <SharePreviewExperience
         onBack={() => undefined}
-        onCopy={async () => undefined}
+        onCopy={async () => 'copied'}
         onShare={async () => 'shared'}
         summary={summary}
       />,
@@ -79,7 +90,7 @@ describe('CP12 rendered privacy-safe sharing', () => {
     const harness = await render(
       <SharePreviewExperience
         onBack={() => undefined}
-        onCopy={async () => undefined}
+        onCopy={async () => 'copied'}
         onShare={() => pending}
         summary={summary}
       />,
@@ -100,7 +111,7 @@ describe('CP12 rendered privacy-safe sharing', () => {
     const harness = await render(
       <SharePreviewExperience
         onBack={() => undefined}
-        onCopy={async () => { copies += 1; }}
+        onCopy={async () => { copies += 1; return 'copied'; }}
         onShare={async () => 'shared'}
         summary={summary}
       />,
@@ -113,15 +124,9 @@ describe('CP12 rendered privacy-safe sharing', () => {
     await cleanup(harness.root, harness.container);
   });
 
-  it('renders the recipient hierarchy once with decorative mascot and working actions', async () => {
-    let checklistCalls = 0;
-    let helpCalls = 0;
+  it('renders genuine keyboard-focusable Recipient links with the canonical destinations', async () => {
     const harness = await render(
-      <ShareRecipientExperience
-        onChecklist={() => { checklistCalls += 1; }}
-        onHelp={() => { helpCalls += 1; }}
-        summary={summary}
-      />,
+      <ShareRecipientExperience summary={recipientSummary} />,
     );
     expect(harness.container.textContent).toContain('Someone you trust shared this offer.');
     expect(harness.container.textContent).toContain('What needs checking');
@@ -130,10 +135,123 @@ describe('CP12 rendered privacy-safe sharing', () => {
     const mascot = harness.container.querySelector('[data-testid="share-recipient-mascot"]');
     expect(mascot?.getAttribute('aria-label')).toBeNull();
 
-    await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="recipient-open-checklist"]')?.click());
-    await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="recipient-get-help"]')?.click());
-    expect(checklistCalls).toBe(1);
-    expect(helpCalls).toBe(1);
+    const checklist = harness.container.querySelector<HTMLAnchorElement>('[data-testid="recipient-open-checklist"]');
+    const help = harness.container.querySelector<HTMLAnchorElement>('[data-testid="recipient-get-help"]');
+    expect(checklist?.tagName).toBe('A');
+    expect(help?.tagName).toBe('A');
+    expect(checklist?.getAttribute('href')).toBe('/check/checklist');
+    expect(help?.getAttribute('href')).toBe('/help');
+    for (const link of [checklist, help]) {
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      await act(async () => {
+        link?.focus();
+        expect(link?.dispatchEvent(enter)).toBe(true);
+      });
+      expect(document.activeElement).toBe(link);
+      expect(enter.defaultPrevented).toBe(false);
+    }
     await cleanup(harness.root, harness.container);
+  });
+
+  it('renders no findings before verification and only reveals them after backend success', async () => {
+    let resolveVerification!: (value: typeof recipientSummary) => void;
+    const pending = new Promise<typeof recipientSummary>((resolve) => { resolveVerification = resolve; });
+    const harness = await render(
+      <ShareRecipientController params={{ token: TOKEN_A }} verifyToken={async () => pending} />,
+    );
+    expect(harness.container.textContent).toContain('Verifying this shared summary…');
+    expect(harness.container.textContent).not.toContain('The legal company is not named.');
+
+    await act(async () => resolveVerification(recipientSummary));
+    expect(harness.container.textContent).toContain('The legal company is not named.');
+    await cleanup(harness.root, harness.container);
+  });
+
+  it('fails closed for backend, invalid, repeated and unknown recipient parameters', async () => {
+    const network = await render(
+      <ShareRecipientController
+        params={{ token: TOKEN_A }}
+        verifyToken={async () => { throw new ShareTokenApiError('network', 'offline'); }}
+      />,
+    );
+    await act(async () => Promise.resolve());
+    expect(network.container.textContent).toContain('This shared summary is unavailable.');
+    expect(network.container.textContent).not.toContain('What needs checking');
+    await cleanup(network.root, network.container);
+
+    for (const params of [
+      { token: [TOKEN_A, TOKEN_A] },
+      { token: TOKEN_A, demo: '1' },
+      {},
+    ]) {
+      const invalid = await render(<ShareRecipientController params={params} />);
+      expect(invalid.container.textContent).toContain('This shared summary is unavailable.');
+      expect(invalid.container.textContent).not.toContain('What needs checking');
+      const check = invalid.container.querySelector<HTMLAnchorElement>('[data-testid="recipient-run-new-check"]');
+      expect(check?.tagName).toBe('A');
+      expect(check?.getAttribute('href')).toBe('/check');
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      await act(async () => {
+        check?.focus();
+        expect(check?.dispatchEvent(enter)).toBe(true);
+      });
+      expect(document.activeElement).toBe(check);
+      expect(enter.defaultPrevented).toBe(false);
+      await cleanup(invalid.root, invalid.container);
+    }
+  });
+
+  it('does not announce Copied when the copy operation fails', async () => {
+    const harness = await render(
+      <SharePreviewExperience
+        onBack={() => undefined}
+        onCopy={async () => { throw new Error('Clipboard write failed.'); }}
+        onShare={async () => 'shared'}
+        summary={summary}
+      />,
+    );
+    await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="copy-share-summary"]')?.click());
+    expect(harness.container.textContent).toContain('Sharing failed.');
+    expect(harness.container.textContent).not.toContain('summary and link copied');
+    await cleanup(harness.root, harness.container);
+  });
+
+  it('announces an honest text-only state when recipient-link creation is unavailable', async () => {
+    const harness = await render(
+      <SharePreviewExperience
+        onBack={() => undefined}
+        onCopy={async () => 'copied-text-only'}
+        onShare={async () => 'shared-text-only'}
+        summary={summary}
+      />,
+    );
+    await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="share-privately"]')?.click());
+    expect(harness.container.textContent).toContain('Recipient link unavailable.');
+    expect(harness.container.textContent).toContain('shared without a link');
+    await cleanup(harness.root, harness.container);
+  });
+
+  it('shows the expired state without findings when verification returns 410', async () => {
+    const harness = await render(
+      <ShareRecipientController
+        params={{ token: TOKEN_A }}
+        verifyToken={async () => { throw new ShareTokenApiError('http', 'expired', 410); }}
+      />,
+    );
+    await act(async () => Promise.resolve());
+    expect(harness.container.textContent).toContain('This shared link has expired.');
+    expect(harness.container.textContent).not.toContain('What needs checking');
+    await cleanup(harness.root, harness.container);
+  });
+
+  it('keeps the 360px and 390px frames horizontally clipped with five floating tabs', async () => {
+    const tabs = ['Home', 'Check', 'News', 'Quiz', 'Help'];
+    expect(tabs).toHaveLength(5);
+    for (const width of [360, 390]) {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      const harness = await render(<ShareRecipientExperience summary={recipientSummary} />);
+      expect(harness.container.scrollWidth).toBeLessThanOrEqual(harness.container.clientWidth);
+      await cleanup(harness.root, harness.container);
+    }
   });
 });

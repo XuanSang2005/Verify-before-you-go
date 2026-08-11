@@ -12,6 +12,7 @@ import {
   unavailableReportsRepository,
   type ReportsRepository,
 } from './modules/reports/reports.repository.js';
+import { registerShareTokenRoutes } from './modules/shares/share-token.route.js';
 
 export interface BuildAppOptions {
   corsOrigins: string[];
@@ -57,6 +58,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await registerReportsRoutes(
     app,
     options.reportsRepository ?? unavailableReportsRepository,
+    options.reportSecuritySecret ?? 'dGVzdC1vbmx5LXJlcG9ydC1zZWN1cml0eS1zZWNyZXQtMzItYnl0ZXM',
+  );
+  await registerShareTokenRoutes(
+    app,
     options.reportSecuritySecret ?? 'dGVzdC1vbmx5LXJlcG9ydC1zZWN1cml0eS1zZWNyZXQtMzItYnl0ZXM',
   );
   app.setErrorHandler((error, request, reply) => {

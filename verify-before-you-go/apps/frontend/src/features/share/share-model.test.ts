@@ -11,10 +11,10 @@ import {
   getPreviewObservations,
   getRecipientChecks,
   parseRecipientShareParams,
-  SHARE_EXPIRY_MS,
+  toVerifiedSafeShareSummary,
 } from './share-model';
 
-const NOW = Date.UTC(2026, 7, 11, 12, 0, 0);
+const VALID_TOKEN = `v1.${'a'.repeat(80)}.${'b'.repeat(43)}`;
 
 function analysisWithPrivateEvidence(ids: AnalysisFindingId[]): AnalyseOfferResponse {
   return {
@@ -52,20 +52,20 @@ test('builds a privacy-safe summary from allowlisted finding IDs only', () => {
   const summary = createSafeShareSummary(analysisWithPrivateEvidence([
     'identity-document-request',
     'off-platform-contact',
-  ]), NOW);
-  const params = createRecipientShareParams(summary);
+  ]));
+  const params = createRecipientShareParams(VALID_TOKEN);
   const shareText = buildPrivateShareText(summary);
   const publicOutput = JSON.stringify({ summary, params, shareText });
 
   assert.deepEqual(summary.findingIds, ['identity-document-request', 'off-platform-contact']);
-  assert.equal(summary.expiresAt, new Date(NOW + SHARE_EXPIRY_MS).toISOString());
+  assert.deepEqual(params, { token: VALID_TOKEN });
   for (const privateValue of ['person@example.com', '@john-doe', 'AB1234567', 'IMG_2041.JPG', '10.1,104.2']) {
     assert.doesNotMatch(publicOutput, new RegExp(privateValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });
 
 test('uses the exact prototype demo hierarchy when no transient analysis exists', () => {
-  const summary = createSafeShareSummary(undefined, NOW);
+  const summary = createSafeShareSummary(undefined);
   assert.equal(summary.demo, true);
   assert.deepEqual(summary.findingIds, demoFindingIds);
   assert.deepEqual(getPreviewObservations(summary), [
@@ -80,29 +80,38 @@ test('uses the exact prototype demo hierarchy when no transient analysis exists'
   ]);
 });
 
-test('round-trips a strict versioned recipient payload and rejects tampering', () => {
-  const summary = createSafeShareSummary(analysisWithPrivateEvidence(['urgency-pressure']), NOW);
-  const params = createRecipientShareParams(summary);
-  assert.deepEqual(parseRecipientShareParams(params, NOW), { status: 'ready', summary });
-
-  assert.deepEqual(parseRecipientShareParams({ ...params, v: '2' }, NOW), { status: 'invalid' });
-  assert.deepEqual(parseRecipientShareParams({ ...params, signals: 'urgency-pressure,urgency-pressure' }, NOW), { status: 'invalid' });
-  assert.deepEqual(parseRecipientShareParams({ ...params, signals: 'urgency-pressure,@john-doe' }, NOW), { status: 'invalid' });
-  assert.deepEqual(parseRecipientShareParams({ ...params, expires: ['1786450000000'] }, NOW), { status: 'invalid' });
+test('accepts one canonical token parameter and rejects unknown, repeated or overlong parameters', () => {
+  const params = createRecipientShareParams(VALID_TOKEN);
+  assert.deepEqual(parseRecipientShareParams(params), { status: 'ready', token: VALID_TOKEN });
+  assert.deepEqual(parseRecipientShareParams({ ...params, demo: '1' }), { status: 'invalid' });
+  assert.deepEqual(parseRecipientShareParams({ token: [VALID_TOKEN, VALID_TOKEN] }), { status: 'invalid' });
+  assert.deepEqual(parseRecipientShareParams({ token: `${VALID_TOKEN}x` }), { status: 'invalid' });
+  assert.deepEqual(parseRecipientShareParams({
+    token: `v1.${'a'.repeat(2_200)}.${'b'.repeat(43)}`,
+  }), { status: 'invalid' });
+  assert.deepEqual(parseRecipientShareParams({
+    v: '1',
+    signals: 'urgency-pressure',
+    expires: '1786450000000',
+    demo: '0',
+  }), { status: 'invalid' });
 });
 
 test('supports a zero-signal summary without implying safety', () => {
-  const summary = createSafeShareSummary(analysisWithPrivateEvidence([]), NOW);
-  const params = createRecipientShareParams(summary);
-  assert.equal(params.signals, 'none');
-  assert.deepEqual(parseRecipientShareParams(params, NOW), { status: 'ready', summary });
+  const summary = createSafeShareSummary(analysisWithPrivateEvidence([]));
   assert.match(buildPrivateShareText(summary), /not a verdict/i);
   assert.doesNotMatch(buildPrivateShareText(summary), /safe offer|offer is safe/i);
 });
 
-test('marks a valid payload expired only after its bounded expiry', () => {
-  const summary = createSafeShareSummary(analysisWithPrivateEvidence(['shortened-link']), NOW);
-  const params = createRecipientShareParams(summary);
-  assert.equal(parseRecipientShareParams(params, NOW + SHARE_EXPIRY_MS).status, 'ready');
-  assert.equal(parseRecipientShareParams(params, NOW + SHARE_EXPIRY_MS + 1).status, 'expired');
+test('uses only backend-verified timestamps for recipient expiry copy', () => {
+  const summary = toVerifiedSafeShareSummary({
+    schemaVersion: 1,
+    findingIds: ['shortened-link'],
+    checkedRuleCount: 9,
+    demo: false,
+    issuedAt: '2026-08-11T12:00:00.000Z',
+    expiresAt: '2026-08-18T12:00:00.000Z',
+  });
+  assert.equal(summary.expiresAt, '2026-08-18T12:00:00.000Z');
+  assert.deepEqual(summary.findingIds, ['shortened-link']);
 });

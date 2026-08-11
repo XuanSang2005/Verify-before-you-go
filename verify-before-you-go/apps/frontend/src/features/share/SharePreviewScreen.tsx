@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -13,6 +13,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { createSignedShareToken } from '@/api/share';
 import { InteractiveSurface } from '@/components/InteractiveSurface';
 import { PrototypeTabScreen } from '@/components/prototype/PrototypeShell';
 import { useOfferDraft } from '@/features/offer-intake/OfferDraftContext';
@@ -35,7 +36,14 @@ import {
 
 const shareMascot = require('../../../assets/mascots/share-footer-screen14.png');
 
-type ShareUiState = 'idle' | 'sharing' | 'shared' | 'copied' | 'failed';
+type ShareUiState =
+  | 'idle'
+  | 'sharing'
+  | 'shared'
+  | 'copied'
+  | 'shared-text-only'
+  | 'copied-text-only'
+  | 'failed';
 
 const webPrimaryGradient = Platform.select({
   web: { backgroundImage: 'linear-gradient(135deg,#0077D4 0%,#7B3FE4 100%)' },
@@ -56,10 +64,22 @@ const webPanelShadow = Platform.select({
 export function SharePreviewScreen() {
   const { analysis } = useOfferDraft();
   const [summary] = useState(() => createSafeShareSummary(analysis));
-  const recipientUrl = useMemo(() => Linking.createURL('share/recipient', {
-    queryParams: createRecipientShareParams(summary),
-  }), [summary]);
-  const bundle = useMemo(() => createPrivateShareBundle(summary, recipientUrl), [recipientUrl, summary]);
+
+  const prepareBundle = async () => {
+    try {
+      const issued = await createSignedShareToken({
+        schemaVersion: summary.schemaVersion,
+        findingIds: summary.findingIds,
+        demo: summary.demo,
+      });
+      const recipientUrl = Linking.createURL('share/recipient', {
+        queryParams: createRecipientShareParams(issued.token),
+      });
+      return createPrivateShareBundle(summary, recipientUrl);
+    } catch {
+      return createPrivateShareBundle(summary);
+    }
+  };
 
   const goBack = () => {
     if (router.canGoBack()) {
@@ -72,8 +92,8 @@ export function SharePreviewScreen() {
   return (
     <SharePreviewExperience
       onBack={goBack}
-      onCopy={() => copyPrivateSummaryWithRuntime(bundle)}
-      onShare={() => sharePrivateSummaryWithRuntime(bundle)}
+      onCopy={async () => copyPrivateSummaryWithRuntime(await prepareBundle())}
+      onShare={async () => sharePrivateSummaryWithRuntime(await prepareBundle())}
       summary={summary}
     />
   );
@@ -86,7 +106,7 @@ export function SharePreviewExperience({
   summary,
 }: {
   onBack: () => void;
-  onCopy: () => Promise<void>;
+  onCopy: () => Promise<'copied' | 'copied-text-only'>;
   onShare: () => Promise<PrivateShareResult>;
   summary: SafeShareSummary;
 }) {
@@ -98,7 +118,7 @@ export function SharePreviewExperience({
     setShareState('sharing');
     try {
       const result = await onShare();
-      setShareState(result === 'copied' ? 'copied' : result === 'shared' ? 'shared' : 'idle');
+      setShareState(result === 'dismissed' ? 'idle' : result);
     } catch {
       setShareState('failed');
     }
@@ -108,8 +128,7 @@ export function SharePreviewExperience({
     if (shareState === 'sharing') return;
     setShareState('sharing');
     try {
-      await onCopy();
-      setShareState('copied');
+      setShareState(await onCopy());
     } catch {
       setShareState('failed');
     }
@@ -217,6 +236,8 @@ export function SharePreviewExperience({
 function ShareStatus({ state }: { state: ShareUiState }) {
   if (state === 'shared') return <Text accessibilityLiveRegion="polite" style={styles.successText}>Private share opened. You choose the recipient.</Text>;
   if (state === 'copied') return <Text accessibilityLiveRegion="polite" style={styles.successText}>Privacy-safe summary and link copied.</Text>;
+  if (state === 'shared-text-only') return <Text accessibilityLiveRegion="polite" style={styles.warningText}>Recipient link unavailable. The privacy-safe text was shared without a link.</Text>;
+  if (state === 'copied-text-only') return <Text accessibilityLiveRegion="polite" style={styles.warningText}>Recipient link unavailable. The privacy-safe text was copied without a link.</Text>;
   if (state === 'failed') return <Text accessibilityLiveRegion="assertive" style={styles.errorText}>Sharing failed. Try Copy summary instead.</Text>;
   return null;
 }
@@ -265,6 +286,7 @@ const styles = StyleSheet.create({
   copyButton: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 24 },
   copyButtonText: { color: colors.blue, fontFamily: typography.bodySemiBold, fontSize: 13, lineHeight: 20 },
   successText: { color: '#1E632B', fontFamily: typography.body, fontSize: 12, lineHeight: 18, textAlign: 'center' },
+  warningText: { color: '#755000', fontFamily: typography.body, fontSize: 12, lineHeight: 18, textAlign: 'center' },
   errorText: { color: '#8A1C1C', fontFamily: typography.body, fontSize: 12, lineHeight: 18, textAlign: 'center' },
   pressed: { opacity: 0.72 },
   disabled: { opacity: 0.62 },

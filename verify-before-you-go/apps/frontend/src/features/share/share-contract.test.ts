@@ -21,8 +21,9 @@ test('canonical share routes live in the floating five-tab shell', () => {
   assert.match(legacyAlias, /Redirect href="\/share\/preview"/);
 });
 
-test('CP12 remains frontend-only and never persists private evidence', () => {
+test('CP12 uses only the signed-token API and never persists or sends private evidence', () => {
   const implementation = [
+    source('src/api/share.ts'),
     source('src/features/share/SharePreviewScreen.tsx'),
     source('src/features/share/ShareRecipientScreen.tsx'),
     source('src/features/share/share-model.ts'),
@@ -30,7 +31,19 @@ test('CP12 remains frontend-only and never persists private evidence', () => {
     source('src/features/share/share-runtime.ts'),
   ].join('\n');
 
-  assert.doesNotMatch(implementation, /fetch\(|axios|AsyncStorage|SecureStore|postingText|markedPassages|screenshotNote|analysisId|reportId|recoveryKey/);
+  assert.match(implementation, /share-tokens/);
+  assert.doesNotMatch(implementation, /axios|AsyncStorage|SecureStore|postingText|markedPassages|screenshotNote|analysisId|reportId|recoveryKey/);
   assert.match(implementation, /full identifiers/i);
   assert.match(implementation, /original screenshot/i);
+});
+
+test('recipient routes accept only one signed token and render genuine links', () => {
+  const model = source('src/features/share/share-model.ts');
+  const recipient = source('src/features/share/ShareRecipientScreen.tsx');
+  assert.match(model, /keys\.length !== 1 \|\| keys\[0\] !== 'token'/);
+  assert.doesNotMatch(model, /params\.(?:v|signals|expires|demo)/);
+  assert.doesNotMatch(model, /return \{\s*(?:v|signals|expires|demo):/);
+  assert.match(recipient, /<Link asChild href="\/check\/checklist">/);
+  assert.match(recipient, /<Link asChild href="\/help">/);
+  assert.match(recipient, /<Link asChild href="\/check">/);
 });

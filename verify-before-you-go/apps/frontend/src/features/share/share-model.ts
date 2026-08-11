@@ -1,11 +1,15 @@
 import {
   ANALYSIS_FINDING_IDS,
+  SHARE_TOKEN_MAX_LENGTH,
+  SHARE_TOKEN_SCHEMA_VERSION,
+  ShareTokenSchema,
   type AnalyseOfferResponse,
   type AnalysisFindingId,
+  type ShareTokenVerificationResponse,
 } from '@vbyg/contracts';
 
-export const SHARE_SCHEMA_VERSION = 1 as const;
-export const SHARE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1_000;
+export const SHARE_SCHEMA_VERSION = SHARE_TOKEN_SCHEMA_VERSION;
+export const MAX_RECIPIENT_URL_LENGTH = 2_300;
 
 const MAX_CHECKED_RULES = ANALYSIS_FINDING_IDS.length;
 const findingIdSet = new Set<string>(ANALYSIS_FINDING_IDS);
@@ -67,25 +71,22 @@ export type SafeShareSummary = {
   schemaVersion: typeof SHARE_SCHEMA_VERSION;
   findingIds: AnalysisFindingId[];
   checkedRuleCount: typeof MAX_CHECKED_RULES;
-  expiresAt: string;
   demo: boolean;
 };
 
-export type RecipientShareParams = {
-  v?: string | string[];
-  signals?: string | string[];
-  expires?: string | string[];
-  demo?: string | string[];
+export type VerifiedSafeShareSummary = SafeShareSummary & {
+  issuedAt: string;
+  expiresAt: string;
 };
 
+export type RecipientShareParams = Record<string, string | string[] | undefined>;
+
 export type RecipientShareParseResult =
-  | { status: 'ready'; summary: SafeShareSummary }
-  | { status: 'expired'; summary: SafeShareSummary }
+  | { status: 'ready'; token: string }
   | { status: 'invalid' };
 
 export function createSafeShareSummary(
   analysis: AnalyseOfferResponse | undefined,
-  now = Date.now(),
 ): SafeShareSummary {
   const findingIds = analysis
     ? uniqueAllowedFindingIds(analysis.findings.map((finding) => finding.id))
@@ -95,58 +96,38 @@ export function createSafeShareSummary(
     schemaVersion: SHARE_SCHEMA_VERSION,
     findingIds,
     checkedRuleCount: MAX_CHECKED_RULES,
-    expiresAt: new Date(now + SHARE_EXPIRY_MS).toISOString(),
     demo: !analysis,
   };
 }
 
-export function createRecipientShareParams(summary: SafeShareSummary): Record<string, string> {
-  return {
-    v: String(SHARE_SCHEMA_VERSION),
-    signals: summary.findingIds.length ? summary.findingIds.join(',') : 'none',
-    expires: String(Date.parse(summary.expiresAt)),
-    demo: summary.demo ? '1' : '0',
-  };
+export function createRecipientShareParams(token: string): Record<string, string> {
+  return { token: ShareTokenSchema.parse(token) };
 }
 
 export function parseRecipientShareParams(
   params: RecipientShareParams,
-  now = Date.now(),
 ): RecipientShareParseResult {
-  const version = singleValue(params.v);
-  const signals = singleValue(params.signals);
-  const expires = singleValue(params.expires);
-  const demo = singleValue(params.demo);
+  const keys = Object.keys(params).filter((key) => params[key] !== undefined);
+  if (keys.length !== 1 || keys[0] !== 'token') return { status: 'invalid' };
+  const token = singleValue(params.token);
+  if (!token || token.length > SHARE_TOKEN_MAX_LENGTH) return { status: 'invalid' };
+  const estimatedUrlLength = '/share/recipient?token='.length + encodeURIComponent(token).length;
+  if (estimatedUrlLength > MAX_RECIPIENT_URL_LENGTH) return { status: 'invalid' };
+  const parsed = ShareTokenSchema.safeParse(token);
+  return parsed.success ? { status: 'ready', token: parsed.data } : { status: 'invalid' };
+}
 
-  if (version !== String(SHARE_SCHEMA_VERSION) || !signals || !expires || !/^\d{13}$/.test(expires)) {
-    return { status: 'invalid' };
-  }
-  if (demo !== '0' && demo !== '1') return { status: 'invalid' };
-
-  const rawFindingIds = signals === 'none' ? [] : signals.split(',');
-  const findingIds = uniqueAllowedFindingIds(rawFindingIds);
-  if (
-    findingIds.length !== rawFindingIds.length
-    || findingIds.length > MAX_CHECKED_RULES
-    || (findingIds.length ? findingIds.join(',') : 'none') !== signals
-  ) {
-    return { status: 'invalid' };
-  }
-
-  const expiresAtMs = Number(expires);
-  if (!Number.isSafeInteger(expiresAtMs)) return { status: 'invalid' };
-
-  const summary: SafeShareSummary = {
-    schemaVersion: SHARE_SCHEMA_VERSION,
-    findingIds,
-    checkedRuleCount: MAX_CHECKED_RULES,
-    expiresAt: new Date(expiresAtMs).toISOString(),
-    demo: demo === '1',
+export function toVerifiedSafeShareSummary(
+  response: ShareTokenVerificationResponse,
+): VerifiedSafeShareSummary {
+  return {
+    schemaVersion: response.schemaVersion,
+    findingIds: [...response.findingIds],
+    checkedRuleCount: response.checkedRuleCount,
+    issuedAt: response.issuedAt,
+    expiresAt: response.expiresAt,
+    demo: response.demo,
   };
-
-  return now > expiresAtMs
-    ? { status: 'expired', summary }
-    : { status: 'ready', summary };
 }
 
 export function getPreviewObservations(summary: SafeShareSummary): string[] {

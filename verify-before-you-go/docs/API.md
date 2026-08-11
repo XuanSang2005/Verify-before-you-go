@@ -107,3 +107,11 @@ HTTP 201 returns a non-enumerable report ID, the exact submission time, initial 
 The backend normalizes Unicode and zero-width bypasses, redacts the public derivative again, and persists no public derivative when public-alert permission is disabled. Private fields use AES-256-GCM with schema/report/field AAD. Domain-separated keys are derived from `REPORT_SECURITY_SECRET`; matching and idempotency values are HMAC-protected, while the durable recovery credential remains a scrypt hash. Only the short-lived delivery copy is encrypted until the retry window expires. Request bodies, idempotency values and recovery keys are excluded from ordinary logs.
 
 The CP11 request contains reviewed structured facts and permissions only. Images attached to the local CP10 draft are not uploaded by this endpoint and remain private on the device.
+
+## `POST /share-tokens`
+
+Accepts only `schemaVersion`, unique allowlisted `findingIds` and the `demo` flag. The backend sets issuance and expiry timestamps, caps lifetime at seven days, and returns one canonical signed token. Signing uses a domain-separated HKDF key derived from `REPORT_SECURITY_SECRET`. Responses are `no-store`; recruitment text, evidence, screenshots, identifiers, report IDs and recovery keys are neither accepted nor logged.
+
+## `POST /share-tokens/verify`
+
+Accepts only `{ "token": "…" }`. A valid, unexpired token returns its allowlisted finding IDs, demo state, server-issued timestamps and the fixed checked-rule count. Modified, malformed, expired or over-lifetime tokens fail closed, and recipient findings remain hidden unless verification succeeds.

@@ -1,19 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Link, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Image, Platform, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, Platform, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
+import { ShareTokenApiError, verifySignedShareToken } from '@/api/share';
 import { InteractiveSurface } from '@/components/InteractiveSurface';
 import { PrototypeTabScreen } from '@/components/prototype/PrototypeShell';
 import { colors, typography } from '@/theme';
 
 import {
-  createSafeShareSummary,
   formatShareExpiry,
   getRecipientChecks,
   parseRecipientShareParams,
+  toVerifiedSafeShareSummary,
   type RecipientShareParams,
-  type SafeShareSummary,
+  type VerifiedSafeShareSummary,
 } from './share-model';
 
 const recipientMascot = require('../../../assets/mascots/recipient-companion-screen15.png');
@@ -24,38 +26,61 @@ const webPrimaryGradient = Platform.select({
 }) as ViewStyle;
 
 export function ShareRecipientScreen() {
-  const params = useLocalSearchParams<RecipientShareParams>();
-  const hasShareParams = Boolean(params.v || params.signals || params.expires || params.demo);
-  const result = hasShareParams
-    ? parseRecipientShareParams(params)
-    : { status: 'ready' as const, summary: createSafeShareSummary(undefined) };
+  const params = useLocalSearchParams() as RecipientShareParams;
+  return <ShareRecipientController params={params} />;
+}
 
-  if (result.status !== 'ready') {
-    return (
-      <UnavailableRecipientExperience
-        expired={result.status === 'expired'}
-        onCheck={() => router.replace('/check')}
-      />
-    );
-  }
+type RecipientVerificationState =
+  | { token: string; status: 'loading' }
+  | { token: string; status: 'ready'; summary: VerifiedSafeShareSummary }
+  | { token: string; status: 'expired' | 'invalid' | 'unavailable' };
+
+export function ShareRecipientController({
+  params,
+  verifyToken = verifySignedShareToken,
+}: {
+  params: RecipientShareParams;
+  verifyToken?: typeof verifySignedShareToken;
+}) {
+  const parsed = parseRecipientShareParams(params);
+  const token = parsed.status === 'ready' ? parsed.token : undefined;
+  const [verification, setVerification] = useState<RecipientVerificationState | undefined>();
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    void verifyToken(token)
+      .then((response) => {
+        if (active) setVerification({ token, status: 'ready', summary: toVerifiedSafeShareSummary(response) });
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        const status = error instanceof ShareTokenApiError && error.status === 410
+          ? 'expired'
+          : error instanceof ShareTokenApiError && error.status === 400
+            ? 'invalid'
+            : 'unavailable';
+        setVerification({ token, status });
+      });
+    return () => { active = false; };
+  }, [token, verifyToken]);
+
+  if (!token) return <UnavailableRecipientExperience expired={false} />;
+  const current = verification?.token === token
+    ? verification
+    : { token, status: 'loading' as const };
+  if (current.status === 'loading') return <LoadingRecipientExperience />;
+  if (current.status !== 'ready') return <UnavailableRecipientExperience expired={current.status === 'expired'} />;
 
   return (
-    <ShareRecipientExperience
-      onChecklist={() => router.push('/check/checklist')}
-      onHelp={() => router.push('/help')}
-      summary={result.summary}
-    />
+    <ShareRecipientExperience summary={current.summary} />
   );
 }
 
 export function ShareRecipientExperience({
-  onChecklist,
-  onHelp,
   summary,
 }: {
-  onChecklist: () => void;
-  onHelp: () => void;
-  summary: SafeShareSummary;
+  summary: VerifiedSafeShareSummary;
 }) {
   const checks = getRecipientChecks(summary);
   return (
@@ -111,38 +136,54 @@ export function ShareRecipientExperience({
       <Text style={styles.micro}>Shared link expires {formatShareExpiry(summary.expiresAt)} · Report abuse</Text>
 
       <View style={styles.actions}>
-        <InteractiveSurface
-          accessibilityLabel="Open the verification checklist"
-          accessibilityRole="link"
-          focusStyle={styles.primaryFocused}
-          hoverStyle={styles.primaryHovered}
-          onPress={onChecklist}
-          pressedStyle={styles.pressed}
-          style={[styles.primaryButton, webPrimaryGradient]}
-          testID="recipient-open-checklist"
-        >
-          <Ionicons color={colors.paper} name="checkbox-outline" size={19} />
-          <Text style={styles.primaryButtonText}>Open the checklist</Text>
-        </InteractiveSurface>
-        <InteractiveSurface
-          accessibilityLabel="Get help"
-          accessibilityRole="link"
-          focusStyle={styles.controlFocused}
-          hoverStyle={styles.helpHovered}
-          onPress={onHelp}
-          pressedStyle={styles.pressed}
-          style={styles.helpButton}
-          testID="recipient-get-help"
-        >
-          <Text style={styles.helpButtonText}>Get help</Text>
-          <Ionicons color={colors.blue} name="arrow-forward" size={18} />
-        </InteractiveSurface>
+        <Link asChild href="/check/checklist">
+          <InteractiveSurface
+            accessibilityLabel="Open the verification checklist"
+            accessibilityRole="link"
+            focusStyle={styles.primaryFocused}
+            hoverStyle={styles.primaryHovered}
+            pressedStyle={styles.pressed}
+            style={[styles.primaryButton, webPrimaryGradient]}
+            testID="recipient-open-checklist"
+          >
+            <Ionicons color={colors.paper} name="checkbox-outline" size={19} />
+            <Text style={styles.primaryButtonText}>Open the checklist</Text>
+          </InteractiveSurface>
+        </Link>
+        <Link asChild href="/help">
+          <InteractiveSurface
+            accessibilityLabel="Get help"
+            accessibilityRole="link"
+            focusStyle={styles.controlFocused}
+            hoverStyle={styles.helpHovered}
+            pressedStyle={styles.pressed}
+            style={styles.helpButton}
+            testID="recipient-get-help"
+          >
+            <Text style={styles.helpButtonText}>Get help</Text>
+            <Ionicons color={colors.blue} name="arrow-forward" size={18} />
+          </InteractiveSurface>
+        </Link>
       </View>
     </PrototypeTabScreen>
   );
 }
 
-function UnavailableRecipientExperience({ expired, onCheck }: { expired: boolean; onCheck: () => void }) {
+function LoadingRecipientExperience() {
+  return (
+    <PrototypeTabScreen contentStyle={styles.screenContent} testID="share-recipient-loading">
+      <StatusBar style="dark" />
+      <View style={styles.headingBlock}>
+        <Text style={styles.kicker}>Private shared check</Text>
+        <Text accessibilityRole="header" style={styles.title}>Verifying this shared summary…</Text>
+        <Text style={styles.unavailableText}>No findings are displayed until the recipient link has been verified.</Text>
+      </View>
+      <ActivityIndicator accessibilityLabel="Verifying recipient link" color={colors.blue} size="small" />
+    </PrototypeTabScreen>
+  );
+}
+
+function UnavailableRecipientExperience({ expired }: { expired: boolean }) {
   return (
     <PrototypeTabScreen contentStyle={styles.screenContent} testID="share-recipient-unavailable">
       <StatusBar style="dark" />
@@ -151,16 +192,18 @@ function UnavailableRecipientExperience({ expired, onCheck }: { expired: boolean
         <Text accessibilityRole="header" style={styles.title}>{expired ? 'This shared link has expired.' : 'This shared summary is unavailable.'}</Text>
         <Text style={styles.unavailableText}>No private evidence is displayed. Ask the sender for a new privacy-safe summary, then verify the offer independently.</Text>
       </View>
-      <InteractiveSurface
-        accessibilityLabel="Run a new offer check"
-        accessibilityRole="link"
-        focusStyle={styles.primaryFocused}
-        onPress={onCheck}
-        pressedStyle={styles.pressed}
-        style={[styles.primaryButton, webPrimaryGradient]}
-      >
-        <Text style={styles.primaryButtonText}>Run a new check</Text>
-      </InteractiveSurface>
+      <Link asChild href="/check">
+        <InteractiveSurface
+          accessibilityLabel="Run a new offer check"
+          accessibilityRole="link"
+          focusStyle={styles.primaryFocused}
+          pressedStyle={styles.pressed}
+          style={[styles.primaryButton, webPrimaryGradient]}
+          testID="recipient-run-new-check"
+        >
+          <Text style={styles.primaryButtonText}>Run a new check</Text>
+        </InteractiveSurface>
+      </Link>
     </PrototypeTabScreen>
   );
 }
