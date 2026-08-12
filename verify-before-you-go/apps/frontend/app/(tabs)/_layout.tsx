@@ -95,6 +95,10 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="how-it-works"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
         name="alerts"
         options={{ href: null }}
       />

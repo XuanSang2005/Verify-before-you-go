@@ -5,6 +5,7 @@ node_modules/
 .env.local
 !.env.example
 apps/frontend/.expo/
+.expo/
 apps/frontend/dist/
 apps/frontend/web-build/
 apps/backend/dist/
