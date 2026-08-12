@@ -8,8 +8,10 @@ export const SUPPORT_DIRECTORY_CACHE_KEY = '@vbyg/support-directory/v1';
 export const SUPPORT_DIRECTORY_CACHE_HEAD_KEY = '@vbyg/support-directory/v2/head';
 export const SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX = '@vbyg/support-directory/v3/snapshot/';
 export const SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX = '@vbyg/support-directory/v3/conflict/';
+export const SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX = '@vbyg/support-directory/v3/conflict-horizon/';
 
-const SUPPORT_DIRECTORY_CACHE_CONFLICT_HORIZON_KEY = '@vbyg/support-directory/v3/conflict-horizon';
+const SUPPORT_DIRECTORY_CACHE_LEGACY_HORIZON_KEY = '@vbyg/support-directory/v3/conflict-horizon';
+const SUPPORT_DIRECTORY_CACHE_HORIZON_FLAG_KEY = '@vbyg/support-directory/v3/has-conflict-horizon';
 const SUPPORT_DIRECTORY_CACHE_V2_SLOT_PREFIX = '@vbyg/support-directory/v2/slot/';
 const MAX_RETAINED_CONFLICT_MARKERS = 16;
 const MAX_RETAINED_SNAPSHOTS = 3;
@@ -79,6 +81,11 @@ type SupportCacheConflictHorizon = {
   rejectAtOrBeforeEpochMs: number;
 };
 
+type SupportCacheHorizonFlag = {
+  cacheSchemaVersion: 3;
+  kind: 'conflict-horizon-present';
+};
+
 type ParsedSnapshot = {
   cache: CachedSupportDirectory;
   content: string;
@@ -99,8 +106,9 @@ type SnapshotAnalysis = {
 };
 
 type ConflictState = {
-  horizonEpochMs?: number;
+  horizons: Map<number, string>;
   markers: Map<number, string>;
+  metadataUnsafe: boolean;
   runtimeRejected: Set<number>;
 };
 
@@ -152,6 +160,18 @@ function hasExactKeys(value: object, expected: readonly string[]) {
 
 function conflictMarkerKey(epochMs: number) {
   return `${SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX}${epochMs}`;
+}
+
+function horizonKey(epochMs: number) {
+  return `${SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX}${epochMs}`;
+}
+
+function encodedEpoch(key: string, prefix: string) {
+  if (!key.startsWith(prefix)) return null;
+  const value = key.slice(prefix.length);
+  if (!/^\d{1,16}$/.test(value)) return null;
+  const epochMs = Number(value);
+  return Number.isSafeInteger(epochMs) && epochMs >= 0 ? epochMs : null;
 }
 
 function parseCachedDirectory(raw: string | null): CacheCandidate | null {
@@ -292,7 +312,10 @@ function parseConflictMarker(key: string, raw: string | null): SupportCacheConfl
   }
 }
 
-function parseConflictHorizon(raw: string | null): SupportCacheConflictHorizon | null {
+function parseConflictHorizon(
+  key: string,
+  raw: string | null,
+): SupportCacheConflictHorizon | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Partial<SupportCacheConflictHorizon>;
@@ -306,8 +329,27 @@ function parseConflictHorizon(raw: string | null): SupportCacheConflictHorizon |
       || !revision
       || value.rejectAtOrBefore !== revision.iso
       || value.rejectAtOrBeforeEpochMs !== revision.epochMs
+      || (
+        key !== SUPPORT_DIRECTORY_CACHE_LEGACY_HORIZON_KEY
+        && encodedEpoch(key, SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX) !== revision.epochMs
+      )
     ) return null;
     return value as SupportCacheConflictHorizon;
+  } catch {
+    return null;
+  }
+}
+
+function parseHorizonFlag(raw: string | null): SupportCacheHorizonFlag | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<SupportCacheHorizonFlag>;
+    if (
+      !hasExactKeys(value, ['cacheSchemaVersion', 'kind'])
+      || value.cacheSchemaVersion !== 3
+      || value.kind !== 'conflict-horizon-present'
+    ) return null;
+    return value as SupportCacheHorizonFlag;
   } catch {
     return null;
   }
@@ -353,33 +395,98 @@ async function bestEffortRemove(storage: SupportCacheStoragePort, keys: readonly
 }
 
 function isRejected(state: ConflictState, epochMs: number) {
+  const effectiveHorizon = state.horizons.size > 0
+    ? Math.max(...state.horizons.keys())
+    : undefined;
   return state.runtimeRejected.has(epochMs)
     || state.markers.has(epochMs)
-    || (state.horizonEpochMs !== undefined && epochMs <= state.horizonEpochMs);
+    || (effectiveHorizon !== undefined && epochMs <= effectiveHorizon);
 }
 
 async function readConflictState(
   storage: SupportCacheStoragePort,
   enumeratedKeys: readonly string[] = [],
+  enumerationSucceeded = true,
 ): Promise<ConflictState> {
-  const state: ConflictState = { markers: new Map(), runtimeRejected: new Set() };
+  const state: ConflictState = {
+    horizons: new Map(),
+    markers: new Map(),
+    metadataUnsafe: false,
+    runtimeRejected: new Set(),
+  };
+
+  let horizonFlagPresent = false;
   try {
-    const horizon = parseConflictHorizon(
-      await storage.getItem(SUPPORT_DIRECTORY_CACHE_CONFLICT_HORIZON_KEY),
-    );
-    if (horizon) state.horizonEpochMs = horizon.rejectAtOrBeforeEpochMs;
+    const rawFlag = await storage.getItem(SUPPORT_DIRECTORY_CACHE_HORIZON_FLAG_KEY);
+    if (rawFlag !== null) {
+      horizonFlagPresent = true;
+      if (!parseHorizonFlag(rawFlag)) state.metadataUnsafe = true;
+    }
   } catch {
-    // Exact markers and retained conflict evidence still fail closed.
+    state.metadataUnsafe = true;
   }
+
+  try {
+    const rawLegacyHorizon = await storage.getItem(SUPPORT_DIRECTORY_CACHE_LEGACY_HORIZON_KEY);
+    if (rawLegacyHorizon !== null) {
+      const legacyHorizon = parseConflictHorizon(
+        SUPPORT_DIRECTORY_CACHE_LEGACY_HORIZON_KEY,
+        rawLegacyHorizon,
+      );
+      if (legacyHorizon) {
+        state.horizons.set(
+          legacyHorizon.rejectAtOrBeforeEpochMs,
+          SUPPORT_DIRECTORY_CACHE_LEGACY_HORIZON_KEY,
+        );
+      } else {
+        state.metadataUnsafe = true;
+      }
+    }
+  } catch {
+    state.metadataUnsafe = true;
+  }
+
+  if (!enumerationSucceeded) {
+    // Once exact markers have been compacted, enumeration is required to find
+    // every immutable horizon record. A durable flag makes this fail closed.
+    if (horizonFlagPresent) state.metadataUnsafe = true;
+    return state;
+  }
+
+  for (const key of enumeratedKeys.filter((item) => item.startsWith(SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX))) {
+    const epochMs = encodedEpoch(key, SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX);
+    try {
+      const horizon = parseConflictHorizon(key, await storage.getItem(key));
+      if (horizon) state.horizons.set(horizon.rejectAtOrBeforeEpochMs, key);
+      else state.metadataUnsafe = true;
+    } catch {
+      state.metadataUnsafe = true;
+    }
+    if (epochMs === null) state.metadataUnsafe = true;
+  }
+
   for (const key of enumeratedKeys.filter((item) => item.startsWith(SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX))) {
+    const epochMs = encodedEpoch(key, SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX);
     try {
       const marker = parseConflictMarker(key, await storage.getItem(key));
       if (marker) state.markers.set(marker.revisionEpochMs, key);
+      else if (epochMs !== null) state.runtimeRejected.add(epochMs);
+      else state.metadataUnsafe = true;
     } catch {
-      // One unreadable marker must not hide another durable rejection.
+      if (epochMs !== null) state.runtimeRejected.add(epochMs);
+      else state.metadataUnsafe = true;
     }
   }
+  if (horizonFlagPresent && state.horizons.size === 0) state.metadataUnsafe = true;
   return state;
+}
+
+function mergeConflictStates(target: ConflictState, source: ConflictState) {
+  for (const [epochMs, key] of source.horizons) target.horizons.set(epochMs, key);
+  for (const [epochMs, key] of source.markers) target.markers.set(epochMs, key);
+  for (const epochMs of source.runtimeRejected) target.runtimeRejected.add(epochMs);
+  target.metadataUnsafe ||= source.metadataUnsafe;
+  return target;
 }
 
 async function persistConflictMarker(
@@ -408,21 +515,34 @@ async function persistConflictMarker(
 }
 
 async function compactConflictMarkers(storage: SupportCacheStoragePort, state: ConflictState) {
+  if (state.metadataUnsafe) return;
   const markers = [...state.markers.entries()].sort(([left], [right]) => right - left);
+  const effectiveHorizon = state.horizons.size > 0
+    ? Math.max(...state.horizons.keys())
+    : undefined;
   const redundant = markers.filter(([epochMs]) => (
-    state.horizonEpochMs !== undefined && epochMs <= state.horizonEpochMs
+    effectiveHorizon !== undefined && epochMs <= effectiveHorizon
   ));
   const active = markers.filter(([epochMs]) => (
-    state.horizonEpochMs === undefined || epochMs > state.horizonEpochMs
+    effectiveHorizon === undefined || epochMs > effectiveHorizon
   ));
   const evicted = active.slice(MAX_RETAINED_CONFLICT_MARKERS);
   if (evicted.length === 0) {
-    await bestEffortRemove(storage, redundant.map(([, key]) => key));
+    if (effectiveHorizon !== undefined) {
+      const weakerHorizons = [...state.horizons.entries()]
+        .filter(([epochMs]) => epochMs < effectiveHorizon)
+        .map(([, key]) => key);
+      await bestEffortRemove(storage, [
+        ...redundant.map(([, key]) => key),
+        ...weakerHorizons,
+      ]);
+    }
     return;
   }
 
   const evictedHorizon = Math.max(...evicted.map(([epochMs]) => epochMs));
-  const horizonEpochMs = Math.max(state.horizonEpochMs ?? Number.NEGATIVE_INFINITY, evictedHorizon);
+  const horizonEpochMs = Math.max(effectiveHorizon ?? Number.NEGATIVE_INFINITY, evictedHorizon);
+  const key = horizonKey(horizonEpochMs);
   const horizon: SupportCacheConflictHorizon = {
     cacheSchemaVersion: 3,
     kind: 'revision-conflict-horizon',
@@ -430,15 +550,23 @@ async function compactConflictMarkers(storage: SupportCacheStoragePort, state: C
     rejectAtOrBeforeEpochMs: horizonEpochMs,
   };
   try {
-    await storage.setItem(SUPPORT_DIRECTORY_CACHE_CONFLICT_HORIZON_KEY, JSON.stringify(horizon));
-    const persisted = parseConflictHorizon(
-      await storage.getItem(SUPPORT_DIRECTORY_CACHE_CONFLICT_HORIZON_KEY),
-    );
+    await storage.setItem(key, JSON.stringify(horizon));
+    const persisted = parseConflictHorizon(key, await storage.getItem(key));
     if (!persisted || persisted.rejectAtOrBeforeEpochMs < horizonEpochMs) return;
-    state.horizonEpochMs = persisted.rejectAtOrBeforeEpochMs;
+    const flag: SupportCacheHorizonFlag = {
+      cacheSchemaVersion: 3,
+      kind: 'conflict-horizon-present',
+    };
+    await storage.setItem(SUPPORT_DIRECTORY_CACHE_HORIZON_FLAG_KEY, JSON.stringify(flag));
+    if (!parseHorizonFlag(await storage.getItem(SUPPORT_DIRECTORY_CACHE_HORIZON_FLAG_KEY))) return;
+    state.horizons.set(persisted.rejectAtOrBeforeEpochMs, key);
+    const weakerHorizons = [...state.horizons.entries()]
+      .filter(([epochMs]) => epochMs < persisted.rejectAtOrBeforeEpochMs)
+      .map(([, storedKey]) => storedKey);
     await bestEffortRemove(storage, [
       ...redundant.map(([, key]) => key),
       ...evicted.map(([, key]) => key),
+      ...weakerHorizons,
     ]);
   } catch {
     // Never delete exact markers unless the bounded horizon is durable.
@@ -467,10 +595,10 @@ async function prepareV3(
   const cleanupKeys = [...invalidKeys, ...analysis.cleanupKeys];
   for (const conflict of analysis.conflicts) {
     const durable = await persistConflictMarker(storage, conflictState, conflict.revision);
-    if (durable) cleanupKeys.push(...conflict.keys);
+    if (durable && !conflictState.metadataUnsafe) cleanupKeys.push(...conflict.keys);
   }
 
-  const accepted = analysis.accepted.filter((snapshot) => {
+  const accepted = (conflictState.metadataUnsafe ? [] : analysis.accepted).filter((snapshot) => {
     if (isRejected(conflictState, snapshot.responseEpochMs)) {
       cleanupKeys.push(snapshot.key);
       return false;
@@ -514,12 +642,48 @@ async function refreshDirectConflictEvidence(
     if (isRejected(state, candidate.responseEpochMs)) continue;
     const key = conflictMarkerKey(candidate.responseEpochMs);
     try {
-      const marker = parseConflictMarker(key, await storage.getItem(key));
+      const raw = await storage.getItem(key);
+      if (raw === null) continue;
+      const marker = parseConflictMarker(key, raw);
       if (marker) state.markers.set(marker.revisionEpochMs, key);
+      else state.runtimeRejected.add(candidate.responseEpochMs);
     } catch {
-      // A readable candidate remains available when marker storage is unavailable.
+      state.runtimeRejected.add(candidate.responseEpochMs);
     }
   }
+}
+
+async function refreshConflictStateBeforeSelection(
+  storage: SupportCacheStoragePort,
+  current: ConflictState,
+  candidates: readonly CacheCandidate[],
+) {
+  let latest: ConflictState;
+  try {
+    const keys = await storage.getAllKeys();
+    latest = await readConflictState(storage, keys, true);
+  } catch {
+    latest = await readConflictState(storage, [], false);
+  }
+  mergeConflictStates(current, latest);
+  await refreshDirectConflictEvidence(storage, current, candidates);
+  // Re-enumerate after direct marker probes. Horizon writers publish the
+  // immutable horizon and safety flag before deleting covered exact markers,
+  // so a rejection completed during this refresh is observed in one of the two
+  // passes before the synchronous final selection.
+  try {
+    const trailingKeys = await storage.getAllKeys();
+    mergeConflictStates(
+      current,
+      await readConflictState(storage, trailingKeys, true),
+    );
+  } catch {
+    mergeConflictStates(
+      current,
+      await readConflictState(storage, [], false),
+    );
+  }
+  return current;
 }
 
 async function persistCandidateConflicts(
@@ -597,15 +761,23 @@ export async function loadCachedSupportDirectory(
     }));
   } catch (error) {
     enumerationError = error;
-    conflictState = await readConflictState(storage);
+    conflictState = await readConflictState(storage, [], false);
   }
 
   const legacyCandidates = await readLegacyCandidates(storage);
   const candidates = [...v3Candidates, ...legacyCandidates];
-  await refreshDirectConflictEvidence(storage, conflictState, candidates);
   await persistCandidateConflicts(storage, conflictState, candidates);
-  const selected = selectCacheCandidate(candidates, conflictState);
-  if (selected && selected.source !== 'v3') await bestEffortMigrate(selected.cache, storage);
+  await refreshConflictStateBeforeSelection(storage, conflictState, candidates);
+  let selected = conflictState.metadataUnsafe
+    ? null
+    : selectCacheCandidate(candidates, conflictState);
+  if (selected && selected.source !== 'v3') {
+    await bestEffortMigrate(selected.cache, storage);
+    await refreshConflictStateBeforeSelection(storage, conflictState, candidates);
+    selected = conflictState.metadataUnsafe
+      ? null
+      : selectCacheCandidate(candidates, conflictState);
+  }
   if (!selected && enumerationError) throw enumerationError;
   return selected?.cache ?? null;
 }

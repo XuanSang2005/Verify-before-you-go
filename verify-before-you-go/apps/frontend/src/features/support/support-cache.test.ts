@@ -11,6 +11,7 @@ import {
   stageCachedSupportDirectory,
   SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX,
   SUPPORT_DIRECTORY_CACHE_HEAD_KEY,
+  SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX,
   SUPPORT_DIRECTORY_CACHE_KEY,
   SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX,
   type SupportCacheStoragePort,
@@ -39,6 +40,12 @@ function createStorage(): SupportCacheStoragePort & { values: Map<string, string
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 function snapshotKeys(storage: ReturnType<typeof createStorage>) {
   return [...storage.values.keys()].filter((key) => key.startsWith(SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX));
 }
@@ -47,6 +54,38 @@ function conflictMarkerKeys(storage: ReturnType<typeof createStorage>) {
   return [...storage.values.keys()].filter((key) => (
     key.startsWith(SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX)
   ));
+}
+
+function horizonKeys(storage: ReturnType<typeof createStorage>) {
+  return [...storage.values.keys()].filter((key) => (
+    key.startsWith(SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX)
+  ));
+}
+
+function putConflictMarker(storage: ReturnType<typeof createStorage>, revision: string) {
+  const normalized = new Date(revision).toISOString();
+  const epochMs = new Date(normalized).getTime();
+  storage.values.set(`${SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX}${epochMs}`, JSON.stringify({
+    cacheSchemaVersion: 3,
+    kind: 'revision-conflict',
+    revision: normalized,
+    revisionEpochMs: epochMs,
+  }));
+}
+
+function putHorizon(storage: ReturnType<typeof createStorage>, revision: string) {
+  const normalized = new Date(revision).toISOString();
+  const epochMs = new Date(normalized).getTime();
+  storage.values.set(`${SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX}${epochMs}`, JSON.stringify({
+    cacheSchemaVersion: 3,
+    kind: 'revision-conflict-horizon',
+    rejectAtOrBefore: normalized,
+    rejectAtOrBeforeEpochMs: epochMs,
+  }));
+  storage.values.set('@vbyg/support-directory/v3/has-conflict-horizon', JSON.stringify({
+    cacheSchemaVersion: 3,
+    kind: 'conflict-horizon-present',
+  }));
 }
 
 test('immutable snapshots choose the newest response revision without an authoritative head', async () => {
@@ -252,7 +291,7 @@ test('conflict markers remain bounded through a durable rejection horizon', asyn
     }, storage, undefined, `marker-${index}-b`);
   }
   assert.ok(conflictMarkerKeys(storage).length <= 16);
-  assert.ok(storage.values.has('@vbyg/support-directory/v3/conflict-horizon'));
+  assert.ok(horizonKeys(storage).length >= 1);
 
   storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
     schemaVersion: 1,
@@ -260,6 +299,153 @@ test('conflict markers remain bounded through a durable rejection horizon', asyn
     data: { ...directory, fetchedAt: firstRevision },
   }));
   assert.equal(await loadCachedSupportDirectory(storage), null);
+  assert.ok(horizonKeys(storage).length <= 1);
+});
+
+test('immutable horizons cannot be lowered by a delayed browser tab', async () => {
+  const storage = createStorage();
+  for (let day = 1; day <= 17; day += 1) {
+    putConflictMarker(storage, new Date(Date.UTC(2026, 6, day)).toISOString());
+  }
+  const lowerEpoch = Date.UTC(2026, 6, 1);
+  const higherEpoch = Date.UTC(2026, 6, 5);
+  const lowerWriteGate = deferred<void>();
+  let lowerWriteEntered = false;
+  const baseSet = storage.setItem;
+  storage.setItem = async (key, value) => {
+    if (key === `${SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX}${lowerEpoch}`) {
+      lowerWriteEntered = true;
+      await lowerWriteGate.promise;
+    }
+    await baseSet(key, value);
+  };
+
+  const tabA = loadCachedSupportDirectory(storage);
+  while (!lowerWriteEntered) await Promise.resolve();
+  for (let day = 18; day <= 21; day += 1) {
+    putConflictMarker(storage, new Date(Date.UTC(2026, 6, day)).toISOString());
+  }
+  const tabB = await loadCachedSupportDirectory(storage);
+  assert.equal(tabB, null);
+  assert.ok(storage.values.has(`${SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX}${higherEpoch}`));
+
+  lowerWriteGate.resolve();
+  assert.equal(await tabA, null);
+  assert.ok(storage.values.has(`${SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX}${lowerEpoch}`));
+
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-13T00:10:00.000Z',
+    data: { ...directory, fetchedAt: new Date(Date.UTC(2026, 6, 3)).toISOString() },
+  }));
+  const restarted: SupportCacheStoragePort = {
+    getAllKeys: storage.getAllKeys,
+    getItem: storage.getItem,
+    removeItem: storage.removeItem,
+    setItem: storage.setItem,
+  };
+  assert.equal(await loadCachedSupportDirectory(restarted), null);
+  assert.ok(horizonKeys(storage).length <= 1);
+});
+
+test('final metadata refresh sees a stronger horizon completed by another tab', async () => {
+  const storage = createStorage();
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-13T00:10:00.000Z',
+    data: newerDirectory,
+  }));
+  const finalReadGate = deferred<void>();
+  let finalReadEntered = false;
+  let enumerationCount = 0;
+  const baseGetAllKeys = storage.getAllKeys;
+  storage.getAllKeys = async () => {
+    enumerationCount += 1;
+    if (enumerationCount === 2) {
+      finalReadEntered = true;
+      await finalReadGate.promise;
+    }
+    return baseGetAllKeys();
+  };
+
+  const staleLoader = loadCachedSupportDirectory(storage);
+  while (!finalReadEntered) await Promise.resolve();
+  putHorizon(storage, newerDirectory.fetchedAt);
+  finalReadGate.resolve();
+  assert.equal(await staleLoader, null);
+});
+
+test('unreadable or malformed exact markers conservatively reject their encoded revision', async () => {
+  for (const mode of ['throws', 'malformed'] as const) {
+    const storage = createStorage();
+    storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+      schemaVersion: 1,
+      cachedAt: '2026-08-13T00:10:00.000Z',
+      data: newerDirectory,
+    }));
+    const epochMs = new Date(newerDirectory.fetchedAt).getTime();
+    const markerKey = `${SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX}${epochMs}`;
+    storage.values.set(markerKey, mode === 'malformed' ? '{bad' : '{}');
+    if (mode === 'throws') {
+      const baseGet = storage.getItem;
+      storage.getItem = async (key) => {
+        if (key === markerKey) throw new Error('marker unreadable');
+        return baseGet(key);
+      };
+    }
+    assert.equal(await loadCachedSupportDirectory(storage), null);
+  }
+});
+
+test('unreadable or malformed compacted horizon makes every cached candidate ineligible', async () => {
+  for (const mode of ['throws', 'malformed'] as const) {
+    const storage = createStorage();
+    const horizonRevision = '2026-08-13T00:00:00.000Z';
+    putHorizon(storage, horizonRevision);
+    const horizonKey = horizonKeys(storage)[0]!;
+    if (mode === 'malformed') storage.values.set(horizonKey, '{bad');
+    if (mode === 'throws') {
+      const baseGet = storage.getItem;
+      storage.getItem = async (key) => {
+        if (key === horizonKey) throw new Error('horizon unreadable');
+        return baseGet(key);
+      };
+    }
+    storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+      schemaVersion: 1,
+      cachedAt: '2026-08-14T00:00:00.000Z',
+      data: { ...directory, fetchedAt: '2026-08-14T00:00:00.000Z' },
+    }));
+    assert.equal(await loadCachedSupportDirectory(storage), null);
+  }
+});
+
+test('horizon cleanup failure changes storage size but not newest eligible selection', async () => {
+  const storage = createStorage();
+  putHorizon(storage, '2026-08-12T00:00:00.000Z');
+  putHorizon(storage, '2026-08-13T00:00:00.000Z');
+  const baseRemove = storage.removeItem;
+  storage.removeItem = async (key) => {
+    if (key.startsWith(SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX)) {
+      throw new Error('horizon cleanup unavailable');
+    }
+    await baseRemove(key);
+  };
+  const eligible: SupportDirectoryResponse = {
+    ...directory,
+    fetchedAt: '2026-08-14T00:00:00.000Z',
+  };
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-14T00:10:00.000Z',
+    data: eligible,
+  }));
+
+  assert.equal(
+    (await loadCachedSupportDirectory(storage))?.data.fetchedAt,
+    eligible.fetchedAt,
+  );
+  assert.equal(horizonKeys(storage).length, 2);
 });
 
 test('chronological selection uses epoch milliseconds instead of raw timestamp spelling', async () => {
@@ -353,6 +539,16 @@ test('v3 enumeration failure still returns the newest directly readable legacy c
   const empty = createStorage();
   empty.getAllKeys = async () => { throw new Error('enumeration unavailable'); };
   await assert.rejects(() => loadCachedSupportDirectory(empty), /enumeration unavailable/);
+
+  const compacted = createStorage();
+  putHorizon(compacted, directory.fetchedAt);
+  compacted.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-13T01:00:00.000Z',
+    data: newerDirectory,
+  }));
+  compacted.getAllKeys = async () => { throw new Error('enumeration unavailable'); };
+  await assert.rejects(() => loadCachedSupportDirectory(compacted), /enumeration unavailable/);
 });
 
 test('storage failures remain observable while cleanup failures do not fail saves', async () => {
