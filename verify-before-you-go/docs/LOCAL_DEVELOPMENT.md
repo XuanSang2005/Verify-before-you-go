@@ -43,10 +43,10 @@ The computer LAN address detected again on 12 August 2026 is `192.168.1.12`. Thi
 
 ```text
 EXPO_PUBLIC_API_BASE_URL=http://192.168.1.12:4000/api/v1
-CORS_ORIGINS=http://localhost:8081,http://localhost:19006,http://192.168.1.12:8081
+CORS_ORIGINS=http://localhost:8081,http://localhost:8082,http://localhost:19006,http://192.168.1.12:8081,http://192.168.1.12:8082
 ```
 
-Set `EXPO_PUBLIC_API_BASE_URL` in `apps/frontend/.env` and add the LAN web origin `http://<LAN-IP>:8081` to the comma-separated `CORS_ORIGINS` value in `apps/backend/.env`. Restart both processes after either value changes. Without the LAN origin, native Expo Go requests can work while Safari opened at the LAN URL is still blocked by CORS.
+Set `EXPO_PUBLIC_API_BASE_URL` in `apps/frontend/.env` and add the LAN dev and static-preview origins `http://<LAN-IP>:8081` and `http://<LAN-IP>:8082` to the comma-separated `CORS_ORIGINS` value in `apps/backend/.env`. Restart both processes after either value changes. Without the LAN origins, native Expo Go requests can work while Safari opened at a LAN URL is still blocked by CORS.
 
 Connect the phone and computer to the same trusted Wi-Fi network, run `npm run dev:frontend`, and scan the QR code with Expo Go. The backend binds to `0.0.0.0`. If the Mac firewall asks, allow incoming connections for Node.js.
 
@@ -65,7 +65,7 @@ npx expo-doctor@latest apps/frontend
 curl http://localhost:4000/api/v1/health
 ```
 
-The seed command upserts one deterministic foundation record, so it is safe to run repeatedly.
+The seed is deterministic and idempotent. It reconciles foundation metadata, newsroom stories, reviewed alerts and support contacts, so it is safe to run repeatedly.
 
 ## CP03 offer drafts and privacy
 
@@ -85,7 +85,7 @@ The CP04 follow-up routes are `/check/checklist` (CP05), `/reports/new` (CP10), 
 
 Run `npm run db:migrate` and `npm run db:seed`, then open `/alerts`. The list and detail screens read public, privacy-masked alert fixtures from PostgreSQL through `GET /api/v1/alerts` and `GET /api/v1/alerts/:id`.
 
-Search accepts public titles, locations, categories and already-masked identifiers. Query values are excluded from backend request logs. Location and pattern filters also work against a previously saved public list while offline. A network failure may show the saved copy with its cache timestamp; HTTP/server and invalid-response failures are labelled separately. A module-scoped per-alert generation coordinator serializes authoritative cache writes and deletions. HTTP 404 blocks the matching detail before attempting storage deletion, so a failed removal or overlapping stale request cannot revive old content.
+Search accepts public titles, locations and already-masked identifiers. Query values are excluded from backend request logs. The Alerts UI supports search and a location filter, including against a previously saved public list while offline; it does not show a pattern filter. A network failure may show the saved copy with its cache timestamp; HTTP/server and invalid-response failures are labelled separately. A module-scoped per-alert generation coordinator serializes authoritative cache writes and deletions. HTTP 404 blocks the matching detail before attempting storage deletion, so a failed removal or overlapping stale request cannot revive old content.
 
 The seeded alerts are synthetic prototype records, not live allegations or verdicts. Public list and detail responses are validated against strict shared schemas before serialization. Identifier display values must match allowlisted handle, phone, licence or account formats with an internal bounded mask run and short visible prefix/suffix; invalid values fail closed. No raw report evidence, unmasked identifier, private attachment or recovery key is stored in the frontend cache.
 
@@ -161,7 +161,8 @@ npx expo-doctor@latest apps/frontend
 The static web export is written to `apps/frontend/dist`. Preview it locally without deploying:
 
 ```bash
-python3 -m http.server 8082 --directory apps/frontend/dist
+cd apps/frontend
+npx expo serve --port 8082
 ```
 
 Internal navigation and direct refresh are supported for all canonical routes. Known static parameters are generated for newsroom stories, reviewed alert IDs and analysis finding IDs. Transient checker results, private report drafts and one-time receipt state intentionally require their originating session and show an honest recovery state after a direct refresh.

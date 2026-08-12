@@ -9,7 +9,7 @@ The approved CP01–CP15 feature set currently provides:
 - Expo Router shell for iOS, Android, and responsive web
 - Fastify API with `GET /api/v1/health`
 - PostgreSQL 18 through Docker Compose
-- Prisma schema, initial migration, and deterministic seed command
+- Prisma schema, migrations, and a deterministic, idempotent seed that reconciles foundation metadata, news, alerts, and support contacts
 - Shared Zod API contracts
 - Root development, verification, and database scripts
 - Centralized visual tokens and the supplied Archivo, Be Vietnam Pro, and IBM Plex Mono fonts

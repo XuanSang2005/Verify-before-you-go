@@ -52,7 +52,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "export:web": "expo export -p web",
+    "export:web": "expo export -p web --clear",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint --max-warnings=0",
     "test": "node --import tsx --test \"src/**/*.test.ts\" && vitest run --config vitest.config.ts"
