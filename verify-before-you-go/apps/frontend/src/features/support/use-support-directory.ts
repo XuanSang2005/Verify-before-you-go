@@ -132,7 +132,7 @@ export async function loadSupportDirectoryState(
         dependencies.commitCache,
       );
       assertAuthority(coordinator, requestAuthority);
-      if (!saved) throw new SupersededSupportDirectoryAttemptError();
+      if (!saved) throw new Error('The offline support snapshot was not retained.');
       return {
         status: response.contacts.length ? 'ready' : 'empty',
         response,

@@ -10,7 +10,7 @@ import {
   commitStagedSupportDirectoryIfAuthoritative,
   loadCachedSupportDirectory,
   stageCachedSupportDirectory,
-  SUPPORT_DIRECTORY_CACHE_HEAD_KEY,
+  SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX,
   type SupportCacheStoragePort,
 } from './support-cache';
 import { SupportDirectoryCoordinator } from './support-coordinator';
@@ -36,6 +36,7 @@ function createStorage(): SupportCacheStoragePort & { values: Map<string, string
   const values = new Map<string, string>();
   return {
     values,
+    getAllKeys: async () => [...values.keys()],
     getItem: async (key) => values.get(key) ?? null,
     removeItem: async (key) => { values.delete(key); },
     setItem: async (key, value) => { values.set(key, value); },
@@ -118,7 +119,7 @@ test('HTTP 500 may use committed cache while invalid parsed data fails closed', 
   assert.equal(invalid.response, undefined);
 });
 
-test('stale physical candidate cannot replace head after revocation and newer request', async () => {
+test('stale physical snapshot cannot outrank a newer revision after revocation', async () => {
   const storage = createStorage();
   const coordinator = new SupportDirectoryCoordinator();
   const oldStageGate = deferred<void>();
@@ -184,7 +185,7 @@ test('newer refresh wins while manual save holds the exact older response revisi
   assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
 });
 
-test('unmount and remount while physical head write is pending cannot regress cache', async () => {
+test('unmount and remount while physical snapshot write is pending cannot regress cache', async () => {
   const storage = createStorage();
   const coordinator = new SupportDirectoryCoordinator();
   const initial = await stageCachedSupportDirectory(newerDirectory, storage, undefined, 'initial-new');
@@ -194,8 +195,8 @@ test('unmount and remount while physical head write is pending cannot regress ca
   const baseSetItem = storage.setItem;
   storage.setItem = async (key, value) => {
     if (
-      key === SUPPORT_DIRECTORY_CACHE_HEAD_KEY
-      && JSON.parse(value).candidateId === 'unmounted-old'
+      key.startsWith(SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX)
+      && JSON.parse(value).snapshotId === 'unmounted-old'
     ) {
       headWriteEntered = true;
       await gate.promise;
@@ -222,18 +223,57 @@ test('unmount and remount while physical head write is pending cannot regress ca
   assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
 });
 
-test('network fallback ignores a newer-looking orphan slot and reads only committed head', async () => {
+test('network fallback scans valid immutable snapshots instead of trusting a stale v2 head', async () => {
   const storage = createStorage();
-  const committed = await stageCachedSupportDirectory(directory, storage, undefined, 'committed-old');
-  await commitStagedSupportDirectory(committed, storage);
-  await stageCachedSupportDirectory(newerDirectory, storage, undefined, 'orphan-new');
-  const headBefore = storage.values.get(SUPPORT_DIRECTORY_CACHE_HEAD_KEY);
+  const older = await stageCachedSupportDirectory(directory, storage, undefined, 'older');
+  await commitStagedSupportDirectory(older, storage);
+  await stageCachedSupportDirectory(newerDirectory, storage, undefined, 'newer');
 
   const state = await loadSupportDirectoryState(dependencies(storage, {
     fetchDirectory: async () => { throw apiError('network'); },
   }));
-  assert.equal(state.response?.fetchedAt, directory.fetchedAt);
-  assert.equal(storage.values.get(SUPPORT_DIRECTORY_CACHE_HEAD_KEY), headBefore);
+  assert.equal(state.response?.fetchedAt, newerDirectory.fetchedAt);
+});
+
+test('two browser-tab coordinators converge on newer revision when old write finishes last', async () => {
+  const storage = createStorage();
+  const oldWriteGate = deferred<void>();
+  let oldWriteEntered = false;
+  const baseSetItem = storage.setItem;
+  storage.setItem = async (key, value) => {
+    if (
+      key.startsWith(SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX)
+      && JSON.parse(value).snapshotId === 'tab-old'
+    ) {
+      oldWriteEntered = true;
+      await oldWriteGate.promise;
+    }
+    await baseSetItem(key, value);
+  };
+
+  const oldTab = dependencies(storage, {
+    coordinator: new SupportDirectoryCoordinator(),
+    fetchDirectory: async () => directory,
+    stageCache: (value) => stageCachedSupportDirectory(value, storage, undefined, 'tab-old'),
+  });
+  const newTab = dependencies(storage, {
+    coordinator: new SupportDirectoryCoordinator(),
+    fetchDirectory: async () => newerDirectory,
+    stageCache: (value) => stageCachedSupportDirectory(value, storage, undefined, 'tab-new'),
+  });
+  const oldAttempt = loadSupportDirectoryState(oldTab);
+  while (!oldWriteEntered) await Promise.resolve();
+  await loadSupportDirectoryState(newTab);
+  assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
+
+  oldWriteGate.resolve();
+  await oldAttempt;
+  assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
+  const restartedCoordinator = new SupportDirectoryCoordinator();
+  assert.equal((await loadSupportDirectoryState(dependencies(storage, {
+    coordinator: restartedCoordinator,
+    fetchDirectory: async () => { throw apiError('network'); },
+  }))).response?.fetchedAt, newerDirectory.fetchedAt);
 });
 
 test('cache stage and commit failures keep live data visible with honest warning', async () => {

@@ -40,6 +40,7 @@ function deferred<T>() {
 function createStorage(): SupportCacheStoragePort {
   const values = new Map<string, string>();
   return {
+    getAllKeys: async () => [...values.keys()],
     getItem: async (key) => values.get(key) ?? null,
     removeItem: async (key) => { values.delete(key); },
     setItem: async (key, value) => { values.set(key, value); },
