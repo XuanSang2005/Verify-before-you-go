@@ -13,5 +13,5 @@
 | CP09 | Approved | PostgreSQL-backed reviewed synthetic alerts, masked identifiers, filters, list/detail API, offline public cache and Screens 12–13 UI |
 | CP10 | Approved | Anonymous report draft, private local evidence handling, privacy review and client-side redaction preview |
 | CP11 | Ready for local review | Idempotent private report submission, encrypted PostgreSQL records, server redaction, bounded recovery delivery and receipt |
-| CP12 | Ready for local review | Signed allowlisted share tokens, privacy-safe preview, native/Web share, copy fallback and verified recipient view |
+| CP12 | Ready for local review | Signed allowlisted share tokens, privacy-safe preview, native/Web share, copy fallback and tamper-checked recipient view |
 | CP13-CP16 | Not started | Awaiting explicit checkpoint approval |

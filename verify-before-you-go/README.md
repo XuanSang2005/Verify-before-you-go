@@ -31,7 +31,7 @@ The approved CP01–CP10 foundation, CP11 ready-for-local-review patch and CP12 
 - Anonymous local report drafting and privacy review at `/reports/new` and `/reports/privacy`
 - Idempotent private report submission to PostgreSQL and a real receipt at `/reports/receipt`
 - Unicode-safe fail-closed backend redaction, AAD-bound encrypted private fields, bounded recovery-key delivery, an atomic native SecureStore vault and one-session web key handling
-- Privacy-safe sharing at `/share/preview` with backend-signed recipient tokens, native/Web share, copy fallback and a verified no-account recipient view at `/share/recipient`
+- Privacy-safe sharing at `/share/preview` with backend-signed recipient tokens, native/Web share, copy fallback and a tamper-checked no-account recipient view at `/share/recipient`
 - Explicit inert placeholders only for workflows assigned to CP13 and later
 
 The implemented screens use evidence-based language rather than a conclusion. Screenshot text is not extracted, offer content and analysis results remain transient, and public alert fixtures are synthetic, reviewed and privacy-masked. CP11 submits structured report facts; private evidence images remain local until a later secure upload flow. CP12 shares only allowlisted signal categories and fixed safety copy, never the posting, marked evidence, screenshot, identifiers, report data or recovery key. Placeholder routes contain no future business logic.

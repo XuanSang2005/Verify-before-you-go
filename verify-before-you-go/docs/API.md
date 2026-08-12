@@ -115,3 +115,5 @@ Accepts only `schemaVersion`, unique allowlisted `findingIds` and the `demo` fla
 ## `POST /share-tokens/verify`
 
 Accepts only `{ "token": "…" }`. A valid, unexpired token returns its allowlisted finding IDs, demo state, server-issued timestamps and the fixed checked-rule count. Modified, malformed, expired or over-lifetime tokens fail closed, and recipient findings remain hidden unless verification succeeds.
+
+Token verification confirms that the shared summary has not been modified and has not expired. It does not verify the sender, the original posting, or the accuracy of the observations.

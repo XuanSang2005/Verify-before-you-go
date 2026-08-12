@@ -143,7 +143,7 @@ export function ShareRecipientExperience({
             focusStyle={styles.primaryFocused}
             hoverStyle={styles.primaryHovered}
             pressedStyle={styles.pressed}
-            style={[styles.primaryButton, webPrimaryGradient]}
+            style={recipientPrimaryButtonStyle}
             testID="recipient-open-checklist"
           >
             <Ionicons color={colors.paper} name="checkbox-outline" size={19} />
@@ -198,7 +198,7 @@ function UnavailableRecipientExperience({ expired }: { expired: boolean }) {
           accessibilityRole="link"
           focusStyle={styles.primaryFocused}
           pressedStyle={styles.pressed}
-          style={[styles.primaryButton, webPrimaryGradient]}
+          style={recipientPrimaryButtonStyle}
           testID="recipient-run-new-check"
         >
           <Text style={styles.primaryButtonText}>Run a new check</Text>
@@ -266,3 +266,8 @@ const styles = StyleSheet.create({
   primaryHovered: { opacity: 0.92 },
   helpHovered: { backgroundColor: colors.ice },
 });
+
+const recipientPrimaryButtonStyle = StyleSheet.flatten([
+  styles.primaryButton,
+  webPrimaryGradient,
+]);
