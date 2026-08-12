@@ -125,3 +125,11 @@ Accepts only `schemaVersion`, unique allowlisted `findingIds` and the `demo` fla
 Accepts only `{ "token": "…" }`. A valid, unexpired token returns its allowlisted finding IDs, demo state, server-issued timestamps and the fixed checked-rule count. Modified, malformed, expired or over-lifetime tokens fail closed, and recipient findings remain hidden unless verification succeeds.
 
 Token verification confirms that the shared summary has not been modified and has not expired. It does not verify the sender, the original posting, or the accuracy of the observations.
+
+## `GET /support-contacts`
+
+Returns the versioned public support directory used by `/help`. The frontend requests the complete pack once and filters Cambodia or Viet Nam locally so both country packs can remain available from the same offline cache. The optional strict `country` query accepts only `cambodia` or `vietnam`; unsupported or extra parameters return HTTP 400.
+
+Each entry states its contact kind, action URI, connectivity requirement, data-status label, source owner, source URL, languages, hours, last review, next review and current/review-due status. `reviewed-reference` means the public source was checked on the shown date; it is not a guarantee that help is currently available. Organization descriptions are `synthetic-summary` prototype copy and require opening the external source for current information.
+
+The endpoint contains no account, device, location, report, offer or recovery-key data. The app never calls a number, opens an external site or shares location without an explicit user action.

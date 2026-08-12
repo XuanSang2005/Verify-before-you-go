@@ -5,6 +5,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 import { seedCommunityAlerts } from '../src/modules/alerts/alerts.seed-data.js';
 import { seedNewsStories } from '../src/modules/news/news.seed-data.js';
+import { seedSupportContacts } from '../src/modules/support/support.seed-data.js';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error('DATABASE_URL is required to seed the database.');
@@ -12,8 +13,8 @@ if (!connectionString) throw new Error('DATABASE_URL is required to seed the dat
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 await prisma.foundationMetadata.upsert({
   where: { id: 'local-foundation' },
-  update: { schemaVersion: 'cp09-v1' },
-  create: { id: 'local-foundation', schemaVersion: 'cp09-v1' },
+  update: { schemaVersion: 'cp14-v1' },
+  create: { id: 'local-foundation', schemaVersion: 'cp14-v1' },
 });
 
 for (const story of seedNewsStories) {
@@ -58,7 +59,26 @@ for (const alert of seedCommunityAlerts) {
     create: { ...alert, location, category, moderationStatus },
   });
 }
+
+for (const contact of seedSupportContacts) {
+  const country = contact.country === 'cambodia' ? 'CAMBODIA' : 'VIETNAM';
+  const kind = {
+    emergency: 'EMERGENCY',
+    embassy: 'EMBASSY',
+    organization: 'ORGANIZATION',
+  }[contact.kind] as 'EMERGENCY' | 'EMBASSY' | 'ORGANIZATION';
+  const accessMode = contact.accessMode === 'cellular' ? 'CELLULAR' : 'INTERNET';
+  const dataStatus = contact.dataStatus === 'reviewed-reference'
+    ? 'REVIEWED_REFERENCE'
+    : 'SYNTHETIC_SUMMARY';
+
+  await prisma.supportContact.upsert({
+    where: { id: contact.id },
+    update: { ...contact, country, kind, accessMode, dataStatus },
+    create: { ...contact, country, kind, accessMode, dataStatus },
+  });
+}
 await prisma.$disconnect();
 console.info(
-  `Seeded deterministic CP09 foundation metadata, ${seedNewsStories.length} synthetic news stories and ${seedCommunityAlerts.length} reviewed synthetic alerts.`,
+  `Seeded deterministic CP14 foundation metadata, ${seedNewsStories.length} synthetic news stories, ${seedCommunityAlerts.length} reviewed synthetic alerts and ${seedSupportContacts.length} support-directory entries.`,
 );

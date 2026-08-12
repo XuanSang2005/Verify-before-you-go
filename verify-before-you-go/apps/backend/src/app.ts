@@ -14,6 +14,11 @@ import {
   type ReportsRepository,
 } from './modules/reports/reports.repository.js';
 import { registerShareTokenRoutes } from './modules/shares/share-token.route.js';
+import { registerSupportRoutes } from './modules/support/support.route.js';
+import {
+  emptySupportRepository,
+  type SupportRepository,
+} from './modules/support/support.repository.js';
 
 export interface BuildAppOptions {
   corsOrigins: string[];
@@ -22,6 +27,7 @@ export interface BuildAppOptions {
   alertsRepository?: AlertsRepository;
   newsRepository?: NewsRepository;
   reportsRepository?: ReportsRepository;
+  supportRepository?: SupportRepository;
   reportSecuritySecret?: string;
 }
 
@@ -58,6 +64,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await registerAnalysisRoute(app);
   await registerAlertsRoutes(app, options.alertsRepository ?? emptyAlertsRepository);
   await registerNewsRoutes(app, options.newsRepository ?? emptyNewsRepository);
+  await registerSupportRoutes(app, options.supportRepository ?? emptySupportRepository);
   await registerReportsRoutes(
     app,
     options.reportsRepository ?? unavailableReportsRepository,

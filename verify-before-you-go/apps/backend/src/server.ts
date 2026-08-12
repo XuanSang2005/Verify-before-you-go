@@ -7,6 +7,7 @@ import { PrismaClient } from './generated/prisma/client.js';
 import { createPrismaAlertsRepository } from './modules/alerts/alerts.repository.js';
 import { createPrismaNewsRepository } from './modules/news/news.repository.js';
 import { createPrismaReportsRepository } from './modules/reports/reports.repository.js';
+import { createPrismaSupportRepository } from './modules/support/support.repository.js';
 
 const environment = loadEnvironment();
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: environment.DATABASE_URL }) });
@@ -20,6 +21,7 @@ const app = await buildApp({
   alertsRepository: createPrismaAlertsRepository(prisma),
   newsRepository: createPrismaNewsRepository(prisma),
   reportsRepository: createPrismaReportsRepository(prisma),
+  supportRepository: createPrismaSupportRepository(prisma),
   reportSecuritySecret: environment.REPORT_SECURITY_SECRET,
 });
 

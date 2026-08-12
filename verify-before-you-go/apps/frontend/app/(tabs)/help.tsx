@@ -1,11 +1,5 @@
-import { PlaceholderScreen } from '@/components/PlaceholderScreen';
+import { SupportDirectoryScreen } from '@/features/support/SupportDirectoryScreen';
 
-export default function HelpPlaceholder() {
-  return (
-    <PlaceholderScreen
-      checkpoint="CP14"
-      description="Country-aware help and emergency contacts will be implemented after the reporting workflows."
-      title="Help and emergency contacts"
-    />
-  );
+export default function HelpRoute() {
+  return <SupportDirectoryScreen />;
 }

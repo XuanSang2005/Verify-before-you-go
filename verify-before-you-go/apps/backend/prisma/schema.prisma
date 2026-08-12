@@ -94,6 +94,56 @@ model CommunityAlert {
   @@index([moderationStatus, reviewedAt])
 }
 
+enum SupportCountry {
+  CAMBODIA
+  VIETNAM
+}
+
+enum SupportContactKind {
+  EMERGENCY
+  EMBASSY
+  ORGANIZATION
+}
+
+enum SupportAccessMode {
+  CELLULAR
+  INTERNET
+}
+
+enum SupportDataStatus {
+  REVIEWED_REFERENCE
+  SYNTHETIC_SUMMARY
+}
+
+model SupportContact {
+  id              String            @id
+  country         SupportCountry
+  countryLabel    String
+  kind            SupportContactKind
+  title           String
+  description     String
+  displayValue    String
+  actionUri       String
+  actionLabel     String
+  accessMode      SupportAccessMode
+  accessLabel     String
+  dataStatus      SupportDataStatus
+  dataStatusLabel String
+  sourceOwner     String
+  sourceUrl       String
+  languages       String[]
+  hours           String
+  lastReviewedAt  DateTime
+  nextReviewAt    DateTime
+  sortOrder       Int
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([country, isActive, sortOrder])
+  @@index([nextReviewAt, isActive])
+}
+
 enum RecruitmentReportStatus {
   RECEIVED
   UNDER_REVIEW

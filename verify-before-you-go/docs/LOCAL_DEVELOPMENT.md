@@ -120,3 +120,11 @@ Open `/reports` and enter the exact report ID and recovery key from a private re
 On iOS and Android, report credentials use the existing versioned single-key SecureStore vault. Vault writes and clears are serialized, corrupt data is never silently overwritten, and an explicit recovery confirmation is required before resetting a damaged vault. On web, entered keys remain only in memory for the running browser session. A full refresh or browser restart requires entering them again; CP13 does not write raw keys to localStorage, sessionStorage, IndexedDB or AsyncStorage.
 
 The list supports loading, empty, offline, invalid-credential and temporarily unavailable states. Clearing local access requires confirmation and removes only keys on this device or in this open browser session—it does not delete the server-side report. `Received`, `Under review` and `More evidence needed` are workflow states, not verification, publication or a scam verdict.
+
+## CP14 help directory
+
+Run `npm run db:migrate` and `npm run db:seed`, then open `/help`. `GET /api/v1/support-contacts` returns both Cambodia and Viet Nam packs; changing the country chip filters that public response locally and does not send location or geolocation data.
+
+The first successful load writes a versioned public directory to AsyncStorage. A later connection failure may show that saved copy with its cache timestamp; server failures and invalid responses are labelled separately. “Save offline” retries the same public-cache write. The cache contains no report, recruitment posting, evidence, screenshot, identifier, recovery key, account or device location.
+
+Emergency and embassy cards show dated reviewed-reference metadata but do not guarantee availability. Organization descriptions are visibly marked synthetic prototype summaries and link to external official pages that need an internet connection. The app never monitors emergencies, automatically calls a service, or shares location.
