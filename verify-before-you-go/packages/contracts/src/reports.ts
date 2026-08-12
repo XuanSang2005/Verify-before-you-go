@@ -72,11 +72,30 @@ export const ReportStatusSchema = z.enum([
   'withdrawn',
 ]);
 
+export const ReportRecoverableStatusSchema = z.enum([
+  'received',
+  'under-review',
+  'more-evidence-needed',
+]);
+
 export const ReportIdSchema = z.string().regex(/^R-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{16}$/u);
 export const ReportRecoveryKeySchema = z.string().regex(
   /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}(?:-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}){5}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{2}$/u,
 );
 export const ReportIdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9_-]{20,128}$/u);
+
+export const ReportStatusLookupRequestSchema = z.strictObject({
+  reportId: ReportIdSchema,
+  recoveryKey: ReportRecoveryKeySchema,
+});
+
+export const ReportStatusLookupResponseSchema = z.strictObject({
+  reportId: ReportIdSchema,
+  submittedAt: z.iso.datetime(),
+  status: ReportRecoverableStatusSchema,
+  updatedAt: z.iso.datetime(),
+  nextStep: z.string().trim().min(1).max(500),
+});
 
 export const ReportReceiptSchema = z.strictObject({
   reportId: ReportIdSchema,
@@ -115,5 +134,8 @@ export type ReportBehaviourId = z.infer<typeof ReportBehaviourIdSchema>;
 export type ReportSharingPermissions = z.infer<typeof ReportSharingPermissionsSchema>;
 export type ReportSubmissionRequest = z.infer<typeof ReportSubmissionRequestSchema>;
 export type ReportStatus = z.infer<typeof ReportStatusSchema>;
+export type ReportRecoverableStatus = z.infer<typeof ReportRecoverableStatusSchema>;
+export type ReportStatusLookupRequest = z.infer<typeof ReportStatusLookupRequestSchema>;
+export type ReportStatusLookupResponse = z.infer<typeof ReportStatusLookupResponseSchema>;
 export type ReportReceipt = z.infer<typeof ReportReceiptSchema>;
 export type ReportSubmissionResponse = z.infer<typeof ReportSubmissionResponseSchema>;

@@ -108,6 +108,14 @@ The backend normalizes Unicode and zero-width bypasses, redacts the public deriv
 
 The CP11 request contains reviewed structured facts and permissions only. Images attached to the local CP10 draft are not uploaded by this endpoint and remain private on the device.
 
+## `POST /reports/status`
+
+Retrieves the minimal current status of one private report using a strict JSON body containing only `reportId` and `recoveryKey`. Credentials are never accepted in a URL or query string. The recovery key is verified against its scrypt hash; an unknown report and an incorrect key return the same generic response.
+
+A successful response contains only `reportId`, `submittedAt`, `status`, `updatedAt` and a privacy-safe `nextStep`. CP13 exposes only `received`, `under-review` and `more-evidence-needed`. It does not return identifiers, descriptions, evidence, attachment paths, ciphertext, matching data or recovery hashes.
+
+Every response is `no-store`/`no-cache`. The endpoint uses an early bounded per-IP rate limit before request validation, rejects extra body or query fields, and excludes request credentials and report IDs from logs. A received or under-review status does not mean the report is verified, published or a scam verdict.
+
 ## `POST /share-tokens`
 
 Accepts only `schemaVersion`, unique allowlisted `findingIds` and the `demo` flag. The backend sets issuance and expiry timestamps, caps lifetime at seven days, and returns one canonical signed token. Signing uses a domain-separated HKDF key derived from `REPORT_SECURITY_SECRET`. Responses are `no-store`; recruitment text, evidence, screenshots, identifiers, report IDs and recovery keys are neither accepted nor logged.

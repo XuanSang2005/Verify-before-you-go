@@ -39,11 +39,11 @@ Set `EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:4000/api/v1`, run `npm run dev:fro
 
 ## Physical device with Expo Go
 
-The computer LAN address detected again on 11 August 2026 is `192.168.1.17`. This address can change whenever the Mac changes Wi-Fi networks or hotspots, so confirm the current address with `ipconfig getifaddr en0` (or `ifconfig en0` when needed), then set:
+The computer LAN address detected again on 12 August 2026 is `10.102.13.31`. This address can change whenever the Mac changes Wi-Fi networks or hotspots, so confirm the current address with `ipconfig getifaddr en0` (or `ifconfig en0` when needed), then set:
 
 ```text
-EXPO_PUBLIC_API_BASE_URL=http://192.168.1.17:4000/api/v1
-CORS_ORIGINS=http://localhost:8081,http://localhost:19006,http://192.168.1.17:8081
+EXPO_PUBLIC_API_BASE_URL=http://10.102.13.31:4000/api/v1
+CORS_ORIGINS=http://localhost:8081,http://localhost:19006,http://10.102.13.31:8081
 ```
 
 Set `EXPO_PUBLIC_API_BASE_URL` in `apps/frontend/.env` and add the LAN web origin `http://<LAN-IP>:8081` to the comma-separated `CORS_ORIGINS` value in `apps/backend/.env`. Restart both processes after either value changes. Without the LAN origin, native Expo Go requests can work while Safari opened at the LAN URL is still blocked by CORS.
@@ -112,3 +112,11 @@ npm run db:cleanup:cp11-local-v1 --workspace @vbyg/backend -- delete-exactly-3-a
 Open `/share/preview` after a transient analysis to share an allowlisted summary of observed signal categories. The app never adds the recruitment posting, marked evidence, screenshot, screenshot metadata, full identifier, private report, case ID or recovery key to the shared text or recipient URL. A direct refresh without transient analysis shows the clearly labelled Screen 14 demo.
 
 “Share privately” opens the native share sheet in Expo Go and uses Web Share in supporting browsers. Web browsers without Web Share copy the privacy-safe summary and recipient link instead; “Copy summary” is always available as an explicit fallback. The backend issues a seven-day token signed with a domain-separated key derived from `REPORT_SECURITY_SECRET`; recipient findings render only after `/api/v1/share-tokens/verify` accepts that token. If token creation is unavailable, sharing remains text-only and clearly says that the recipient link is unavailable—an unsigned URL is never created. CP12 adds no database persistence. Expo Go development links are LAN-bound and can change when Wi-Fi changes; production sharing needs a deployed universal/app link.
+
+## CP13 My Reports and status recovery
+
+Open `/reports` and enter the exact report ID and recovery key from a private receipt. The app sends them only in the body of `POST /api/v1/reports/status`; neither value is placed in a URL, query string, analytics event or ordinary log. The status response is deliberately minimal and never includes the report identifier/source, description, evidence, attachments, ciphertext or recovery hash.
+
+On iOS and Android, report credentials use the existing versioned single-key SecureStore vault. Vault writes and clears are serialized, corrupt data is never silently overwritten, and an explicit recovery confirmation is required before resetting a damaged vault. On web, entered keys remain only in memory for the running browser session. A full refresh or browser restart requires entering them again; CP13 does not write raw keys to localStorage, sessionStorage, IndexedDB or AsyncStorage.
+
+The list supports loading, empty, offline, invalid-credential and temporarily unavailable states. Clearing local access requires confirmation and removes only keys on this device or in this open browser session—it does not delete the server-side report. `Received`, `Under review` and `More evidence needed` are workflow states, not verification, publication or a scam verdict.

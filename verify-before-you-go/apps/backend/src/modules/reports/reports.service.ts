@@ -1,7 +1,11 @@
 import {
   ReportIdempotencyKeySchema,
+  ReportStatusLookupRequestSchema,
+  ReportStatusLookupResponseSchema,
   ReportSubmissionRequestSchema,
   ReportSubmissionResponseSchema,
+  type ReportRecoverableStatus,
+  type ReportStatusLookupResponse,
   type ReportSubmissionRequest,
   type ReportSubmissionResponse,
 } from '@vbyg/contracts';
@@ -13,6 +17,7 @@ import {
 import type {
   CreateRecruitmentReportInput,
   RecruitmentReportRecord,
+  RecruitmentReportStatusRecord,
   ReportsRepository,
 } from './reports.repository.js';
 import {
@@ -26,11 +31,19 @@ import {
   hashRecoveryKey,
   hashSubmissionPayload,
   type ReportSecurityKeys,
+  verifyRecoveryKey,
 } from './reports.security.js';
 
 export const PRIVATE_INTAKE_NOTICE =
   'This private receipt does not mean the report has been reviewed, verified or published.' as const;
 export const RECOVERY_KEY_DELIVERY_WINDOW_MS = 10 * 60 * 1_000;
+const DUMMY_RECOVERY_KEY_HASH = `scrypt-v1$${'A'.repeat(22)}$${'A'.repeat(43)}`;
+
+const reportStatusNextSteps: Record<ReportRecoverableStatus, string> = {
+  received: 'This report has been received, but that does not mean it is verified, published or a scam verdict. Keep the recovery key private and check again later.',
+  'under-review': 'Review is in progress. This does not mean the report is verified, published or a scam verdict. Check again later for an update.',
+  'more-evidence-needed': 'The review needs more evidence. This is not a scam verdict. Review the report guidance before deciding whether to share additional information.',
+};
 
 export class ReportIdempotencyConflictError extends Error {
   constructor() {
@@ -39,11 +52,47 @@ export class ReportIdempotencyConflictError extends Error {
   }
 }
 
+export class ReportStatusUnavailableError extends Error {
+  constructor() {
+    super('The report status could not be retrieved with those details.');
+    this.name = 'ReportStatusUnavailableError';
+  }
+}
+
 export interface SubmitReportDependencies {
   createPublicId?: () => string;
   createRecoveryKey?: () => string;
   hashRecoverySecret?: (key: string) => Promise<string>;
   now?: () => Date;
+}
+
+export interface LookupReportStatusDependencies {
+  verifyRecoverySecret?: (candidate: string, encodedHash: string) => Promise<boolean>;
+}
+
+export async function lookupRecruitmentReportStatus(
+  repository: ReportsRepository,
+  rawRequest: unknown,
+  dependencies: LookupReportStatusDependencies = {},
+): Promise<ReportStatusLookupResponse> {
+  const request = ReportStatusLookupRequestSchema.parse(rawRequest);
+  const record = await repository.findStatusByPublicId(request.reportId);
+  const matches = await (dependencies.verifyRecoverySecret ?? verifyRecoveryKey)(
+    request.recoveryKey,
+    record?.recoveryKeyHash ?? DUMMY_RECOVERY_KEY_HASH,
+  );
+  if (!record || record.publicId !== request.reportId || !matches) {
+    throw new ReportStatusUnavailableError();
+  }
+  const status = toRecoverableReportStatus(record);
+  if (!status) throw new ReportStatusUnavailableError();
+  return ReportStatusLookupResponseSchema.parse({
+    reportId: record.publicId,
+    submittedAt: record.submittedAt.toISOString(),
+    status,
+    updatedAt: record.updatedAt.toISOString(),
+    nextStep: reportStatusNextSteps[status],
+  });
 }
 
 export async function submitRecruitmentReport(
@@ -220,4 +269,19 @@ function createReceipt(record: RecruitmentReportRecord, recoveryKey: string | nu
     recoveryKey,
     recoveryKeyStatus: recoveryKey ? 'delivered' : 'unavailable',
   });
+}
+
+function toRecoverableReportStatus(
+  record: RecruitmentReportStatusRecord,
+): ReportRecoverableStatus | null {
+  switch (record.status) {
+    case 'RECEIVED':
+      return 'received';
+    case 'UNDER_REVIEW':
+      return 'under-review';
+    case 'MORE_EVIDENCE_NEEDED':
+      return 'more-evidence-needed';
+    default:
+      return null;
+  }
 }

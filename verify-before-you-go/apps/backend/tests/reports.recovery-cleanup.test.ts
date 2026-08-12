@@ -16,6 +16,7 @@ function cleanupRepository(
 ): ReportsRepository {
   return {
     findByIdempotencyHash: async () => null,
+    findStatusByPublicId: async () => null,
     create: async () => { throw new Error('not used'); },
     clearRecoveryKeyDelivery: async () => undefined,
     clearExpiredRecoveryKeyDeliveries,

@@ -14,4 +14,5 @@
 | CP10 | Approved | Anonymous report draft, private local evidence handling, privacy review and client-side redaction preview |
 | CP11 | Approved | Idempotent private report submission, encrypted PostgreSQL records, server redaction, bounded recovery delivery and receipt |
 | CP12 | Approved | Signed allowlisted share tokens, privacy-safe preview, native/Web share, copy fallback and tamper-checked recipient view |
-| CP13-CP16 | Not started | Awaiting explicit checkpoint approval |
+| CP13 | Ready for local review | Private report status recovery, native SecureStore access vault, session-only web keys and Screen 16 My Reports UI |
+| CP14-CP16 | Not started | Awaiting explicit checkpoint approval |

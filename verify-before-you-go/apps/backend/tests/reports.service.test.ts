@@ -56,6 +56,9 @@ function createMemoryRepository(): ReportsRepository & {
     async findByIdempotencyHash(hash) {
       return records.get(hash) ?? null;
     },
+    async findStatusByPublicId() {
+      return null;
+    },
     async create(input) {
       created.push(input);
       const record = toRecord(input);
@@ -165,6 +168,9 @@ test('concurrent duplicate creation resolves to the authoritative stored report'
       lookupCount += 1;
       if (lookupCount === 1) return null;
       return captured ? toRecord(captured) : null;
+    },
+    async findStatusByPublicId() {
+      return null;
     },
     async create(input) {
       captured = input;

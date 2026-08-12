@@ -17,13 +17,13 @@ export interface RecoveryKeyRetentionResult {
   message: string;
 }
 
-interface RecoveryVaultRecord {
+export interface RecoveryVaultRecord {
   reportId: string;
   recoveryKey: string;
   savedAt: string;
 }
 
-interface RecoveryVault {
+export interface RecoveryVault {
   schemaVersion: typeof RECOVERY_KEY_VAULT_SCHEMA_VERSION;
   records: RecoveryVaultRecord[];
 }
@@ -56,30 +56,84 @@ export async function retainRecoveryKey(
     };
   }
 
-  const resolvedStorage = storage ?? await createSecureStorePort();
-  const currentVault = parseRecoveryVault(await resolvedStorage.getItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY));
   const nextRecord: RecoveryVaultRecord = {
     reportId: response.report.reportId,
     recoveryKey: response.recoveryKey,
     savedAt: now().toISOString(),
   };
-  const nextVault: RecoveryVault = {
-    schemaVersion: RECOVERY_KEY_VAULT_SCHEMA_VERSION,
-    records: [
-      ...currentVault.records.filter((record) => record.reportId !== nextRecord.reportId),
-      nextRecord,
-    ],
-  };
-  const secureStore = storage ? undefined : await import('expo-secure-store');
-  const options = secureStore
-    ? { keychainAccessible: secureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY }
-    : undefined;
-  await resolvedStorage.setItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY, JSON.stringify(nextVault), options);
+  const vault = storage
+    ? new RecoveryKeyVaultCoordinator(async () => ({ storage }))
+    : recoveryKeyVaultCoordinator;
+  await vault.upsert(nextRecord);
   return {
     status: 'saved-securely',
     message: 'The recovery key was saved in secure device storage.',
   };
 }
+
+export interface RecoveryKeyVaultStorageBinding {
+  storage: SecureRecoveryStoragePort;
+  options?: Record<string, unknown>;
+}
+
+type RecoveryKeyVaultStorageFactory = () => Promise<RecoveryKeyVaultStorageBinding>;
+
+/**
+ * Serializes every mutation of the existing single-key SecureStore vault. A failed
+ * mutation leaves the previously committed vault untouched and a corrupt vault is
+ * never silently replaced.
+ */
+export class RecoveryKeyVaultCoordinator {
+  private tail: Promise<void> = Promise.resolve();
+
+  constructor(private readonly createStorage: RecoveryKeyVaultStorageFactory = createSecureStoreBinding) {}
+
+  read(): Promise<RecoveryVault> {
+    return this.serialize(async () => {
+      const { storage } = await this.createStorage();
+      return parseRecoveryVault(await storage.getItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY));
+    });
+  }
+
+  upsert(record: RecoveryVaultRecord): Promise<RecoveryVault> {
+    return this.serialize(async () => {
+      if (!isRecoveryVaultRecord(record)) throw new InvalidRecoveryKeyVaultError();
+      const { options, storage } = await this.createStorage();
+      const current = parseRecoveryVault(await storage.getItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY));
+      const next: RecoveryVault = {
+        schemaVersion: RECOVERY_KEY_VAULT_SCHEMA_VERSION,
+        records: [...current.records.filter((item) => item.reportId !== record.reportId), record],
+      };
+      await storage.setItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY, JSON.stringify(next), options);
+      return next;
+    });
+  }
+
+  /** Explicit recovery action: one authoritative write replaces the entire vault. */
+  clear(): Promise<void> {
+    return this.serialize(async () => {
+      const { options, storage } = await this.createStorage();
+      const empty: RecoveryVault = { schemaVersion: RECOVERY_KEY_VAULT_SCHEMA_VERSION, records: [] };
+      await storage.setItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY, JSON.stringify(empty), options);
+    });
+  }
+
+  async whenIdle(): Promise<void> {
+    while (true) {
+      const tail = this.tail;
+      await tail;
+      if (tail === this.tail) return;
+    }
+  }
+
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(operation, operation);
+    this.tail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+}
+
+export const recoveryKeyVaultCoordinator = new RecoveryKeyVaultCoordinator();
 
 export function parseRecoveryVault(raw: string | null): RecoveryVault {
   if (raw === null) return { schemaVersion: RECOVERY_KEY_VAULT_SCHEMA_VERSION, records: [] };
@@ -101,11 +155,14 @@ export function parseRecoveryVault(raw: string | null): RecoveryVault {
   return value as unknown as RecoveryVault;
 }
 
-async function createSecureStorePort(): Promise<SecureRecoveryStoragePort> {
+async function createSecureStoreBinding(): Promise<RecoveryKeyVaultStorageBinding> {
   const secureStore = await import('expo-secure-store');
   return {
-    getItemAsync: secureStore.getItemAsync,
-    setItemAsync: secureStore.setItemAsync,
+    storage: {
+      getItemAsync: secureStore.getItemAsync,
+      setItemAsync: secureStore.setItemAsync,
+    },
+    options: { keychainAccessible: secureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
   };
 }
 

@@ -37,6 +37,9 @@ function createRouteRepository() {
     async findByIdempotencyHash(hash) {
       return records.get(hash) ?? null;
     },
+    async findStatusByPublicId() {
+      return null;
+    },
     async create(input) {
       created.push(input);
       const record = {
@@ -159,6 +162,7 @@ test('report identifiers, descriptions, idempotency keys and recovery keys never
 test('repository failure returns a generic retryable response without echoing private content', async () => {
   const app = await buildReportsTestApp({
     findByIdempotencyHash: async () => null,
+    findStatusByPublicId: async () => null,
     create: async () => { throw new Error('database failed'); },
     clearRecoveryKeyDelivery: async () => undefined,
     clearExpiredRecoveryKeyDeliveries: async () => 0,

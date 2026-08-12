@@ -8,6 +8,7 @@ import type {
   PrismaClient,
   RecruitmentReportBehaviour,
   RecruitmentReportIdentifierType,
+  RecruitmentReportStatus,
   RecruitmentReportSubjectType,
 } from '../../generated/prisma/client.js';
 
@@ -18,6 +19,14 @@ export interface RecruitmentReportRecord {
   submittedAt: Date;
   recoveryKeyDeliveryCiphertext: string | null;
   recoveryKeyDeliverUntil: Date | null;
+}
+
+export interface RecruitmentReportStatusRecord {
+  publicId: string;
+  recoveryKeyHash: string;
+  status: RecruitmentReportStatus;
+  submittedAt: Date;
+  updatedAt: Date;
 }
 
 export interface CreateRecruitmentReportInput extends RecruitmentReportRecord {
@@ -41,6 +50,7 @@ export interface CreateRecruitmentReportInput extends RecruitmentReportRecord {
 
 export interface ReportsRepository {
   findByIdempotencyHash: (hash: string) => Promise<RecruitmentReportRecord | null>;
+  findStatusByPublicId: (publicId: string) => Promise<RecruitmentReportStatusRecord | null>;
   create: (input: CreateRecruitmentReportInput) => Promise<RecruitmentReportRecord>;
   clearRecoveryKeyDelivery: (publicId: string) => Promise<void>;
   clearExpiredRecoveryKeyDeliveries: (cutoff: Date) => Promise<number>;
@@ -86,6 +96,18 @@ export function createPrismaReportsRepository(prisma: PrismaClient): ReportsRepo
         },
       });
       return row;
+    },
+    async findStatusByPublicId(publicId) {
+      return prisma.recruitmentReport.findUnique({
+        where: { publicId },
+        select: {
+          publicId: true,
+          recoveryKeyHash: true,
+          status: true,
+          submittedAt: true,
+          updatedAt: true,
+        },
+      });
     },
     async create(input) {
       return prisma.recruitmentReport.create({
@@ -148,6 +170,7 @@ export function createPrismaReportsRepository(prisma: PrismaClient): ReportsRepo
 
 export const unavailableReportsRepository: ReportsRepository = {
   findByIdempotencyHash: async () => null,
+  findStatusByPublicId: async () => null,
   create: async () => {
     throw new Error('Reports repository is unavailable.');
   },

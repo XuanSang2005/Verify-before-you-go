@@ -3,12 +3,15 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const draftRoute = readFileSync(new URL('../../../app/(tabs)/reports/new.tsx', import.meta.url), 'utf8');
+const myReportsRoute = readFileSync(new URL('../../../app/(tabs)/reports/index.tsx', import.meta.url), 'utf8');
 const privacyRoute = readFileSync(new URL('../../../app/(tabs)/reports/privacy.tsx', import.meta.url), 'utf8');
 const receiptRoute = readFileSync(new URL('../../../app/(tabs)/reports/receipt.tsx', import.meta.url), 'utf8');
 const tabLayout = readFileSync(new URL('../../../app/(tabs)/_layout.tsx', import.meta.url), 'utf8');
 const draftScreen = readFileSync(new URL('./ReportDraftScreen.tsx', import.meta.url), 'utf8');
 
-test('canonical CP10-CP11 routes render inside the shared tab shell without a sixth visible tab', () => {
+test('canonical CP10-CP13 routes render inside the shared tab shell without a sixth visible tab', () => {
+  assert.match(myReportsRoute, /MyReportsScreen/);
+  assert.doesNotMatch(myReportsRoute, /PlaceholderScreen|CP13/);
   assert.match(draftRoute, /ReportDraftScreen/);
   assert.match(privacyRoute, /ReportPrivacyScreen/);
   assert.match(receiptRoute, /ReportReceiptScreen/);

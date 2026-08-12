@@ -2,6 +2,7 @@ import {
   REPORT_BEHAVIOUR_IDS,
   REPORT_IDENTIFIER_TYPES,
   REPORT_SUBJECT_TYPES,
+  ReportStatusLookupResponseSchema,
 } from '@vbyg/contracts';
 import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
@@ -10,6 +11,8 @@ import type { ReportsRepository } from './reports.repository.js';
 import { RecoveryDeliveryExpiryCleaner } from './reports.recovery-cleanup.js';
 import {
   ReportIdempotencyConflictError,
+  ReportStatusUnavailableError,
+  lookupRecruitmentReportStatus,
   submitRecruitmentReport,
 } from './reports.service.js';
 
@@ -99,12 +102,39 @@ const reportSubmissionResponseSchema = {
   },
 } as const;
 
+const reportStatusRequestSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['reportId', 'recoveryKey'],
+  properties: {
+    reportId: { type: 'string', pattern: '^R-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{16}$' },
+    recoveryKey: {
+      type: 'string',
+      pattern: '^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}(?:-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}){5}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{2}$',
+    },
+  },
+} as const;
+
+const reportStatusResponseSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['reportId', 'submittedAt', 'status', 'updatedAt', 'nextStep'],
+  properties: {
+    reportId: { type: 'string', pattern: '^R-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{16}$' },
+    submittedAt: { type: 'string', format: 'date-time' },
+    status: { type: 'string', enum: ['received', 'under-review', 'more-evidence-needed'] },
+    updatedAt: { type: 'string', format: 'date-time' },
+    nextStep: { type: 'string', minLength: 1, maxLength: 500 },
+  },
+} as const;
+
 export async function registerReportsRoutes(
   app: FastifyInstance,
   repository: ReportsRepository,
   reportSecuritySecret: string,
 ): Promise<void> {
-  const rateLimit = createReportRateLimit();
+  const submissionRateLimit = createReportRateLimit();
+  const statusRateLimit = createReportRateLimit(6);
   const expiryCleaner = new RecoveryDeliveryExpiryCleaner(repository, {
     onError: () => app.log.error(
       { code: 'REPORT_RECOVERY_DELIVERY_CLEANUP_FAILED' },
@@ -119,7 +149,7 @@ export async function registerReportsRoutes(
       onRequest: async (request, reply) => {
         reply.header('Cache-Control', 'no-store');
         reply.header('Pragma', 'no-cache');
-        if (rateLimit.consume(request.ip)) return;
+        if (submissionRateLimit.consume(request.ip)) return;
         request.log.warn('Private report submission rate limit reached');
         await reply.status(429).send({
           error: {
@@ -186,6 +216,78 @@ export async function registerReportsRoutes(
           error: {
             code: 'REPORT_SUBMISSION_FAILED',
             message: 'The private report could not be submitted. Your local draft has not been removed.',
+            requestId: request.id,
+          },
+        });
+      }
+    },
+  );
+
+  app.post(
+    '/api/v1/reports/status',
+    {
+      onRequest: async (request, reply) => {
+        reply.header('Cache-Control', 'no-store');
+        reply.header('Pragma', 'no-cache');
+        if (statusRateLimit.consume(request.ip)) return;
+        request.log.warn('Private report status rate limit reached');
+        await reply.status(429).send({
+          error: {
+            code: 'REPORT_STATUS_RATE_LIMITED',
+            message: 'Please wait before trying to retrieve a report status again.',
+            requestId: request.id,
+          },
+        });
+      },
+      schema: {
+        querystring: {
+          type: 'object',
+          additionalProperties: false,
+        },
+        body: reportStatusRequestSchema,
+        response: {
+          200: reportStatusResponseSchema,
+          400: errorResponseSchema,
+          404: errorResponseSchema,
+          429: errorResponseSchema,
+          503: errorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const result = ReportStatusLookupResponseSchema.parse(
+          await lookupRecruitmentReportStatus(repository, request.body),
+        );
+        return reply.status(200).send(result);
+      } catch (error) {
+        if (error instanceof ZodError) {
+          request.log.warn('Private report status validation failed');
+          return reply.status(400).send({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'The report ID or recovery key format is invalid.',
+              requestId: request.id,
+            },
+          });
+        }
+        if (error instanceof ReportStatusUnavailableError) {
+          return reply.status(404).send({
+            error: {
+              code: 'REPORT_STATUS_UNAVAILABLE',
+              message: error.message,
+              requestId: request.id,
+            },
+          });
+        }
+        request.log.error(
+          { code: 'REPORT_STATUS_LOOKUP_FAILED' },
+          'Private report status lookup failed',
+        );
+        return reply.status(503).send({
+          error: {
+            code: 'REPORT_STATUS_SERVICE_UNAVAILABLE',
+            message: 'The report status service is temporarily unavailable.',
             requestId: request.id,
           },
         });

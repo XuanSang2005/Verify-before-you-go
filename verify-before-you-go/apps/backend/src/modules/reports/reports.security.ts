@@ -5,6 +5,7 @@ import {
   hkdfSync,
   randomBytes,
   scrypt as nodeScrypt,
+  timingSafeEqual,
 } from 'node:crypto';
 import { promisify } from 'node:util';
 
@@ -62,6 +63,16 @@ export function createRandomRecoveryKey(bytes = randomBytes(16)): string {
 export async function hashRecoveryKey(recoveryKey: string, salt = randomBytes(16)): Promise<string> {
   const derived = await scrypt(recoveryKey, salt, 32) as Buffer;
   return `scrypt-v1$${salt.toString('base64url')}$${derived.toString('base64url')}`;
+}
+
+export async function verifyRecoveryKey(recoveryKey: string, encodedHash: string): Promise<boolean> {
+  const [version, encodedSalt, encodedExpected, extra] = encodedHash.split('$');
+  if (version !== 'scrypt-v1' || !encodedSalt || !encodedExpected || extra !== undefined) return false;
+  const salt = decodeCanonicalBase64Url(encodedSalt);
+  const expected = decodeCanonicalBase64Url(encodedExpected);
+  if (!salt || salt.byteLength !== 16 || !expected || expected.byteLength !== 32) return false;
+  const derived = await scrypt(recoveryKey, salt, expected.byteLength) as Buffer;
+  return timingSafeEqual(derived, expected);
 }
 
 export function hashIdempotencyKey(idempotencyKey: string, key: Buffer): string {
@@ -163,4 +174,10 @@ function encodeBase32(bytes: Uint8Array): string {
   }
   if (bits > 0) output += base32Alphabet[(value << (5 - bits)) & 31];
   return output;
+}
+
+function decodeCanonicalBase64Url(value: string): Buffer | null {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) return null;
+  const decoded = Buffer.from(value, 'base64url');
+  return decoded.toString('base64url') === value ? decoded : null;
 }
