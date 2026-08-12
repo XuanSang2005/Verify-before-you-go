@@ -9,6 +9,7 @@ import {
   StyleSheet,
   View,
   useWindowDimensions,
+  type GestureResponderEvent,
   type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -243,6 +244,27 @@ function FloatingTabItem({
         }],
       };
   const webHrefProps = Platform.OS === 'web' ? { href } : {};
+  const handlePress = (event: GestureResponderEvent) => {
+    if (Platform.OS === 'web') {
+      const mouseEvent = event.nativeEvent as unknown as {
+        altKey?: boolean;
+        button?: number;
+        ctrlKey?: boolean;
+        metaKey?: boolean;
+        shiftKey?: boolean;
+      };
+      const modified = Boolean(
+        mouseEvent.altKey
+        || mouseEvent.ctrlKey
+        || mouseEvent.metaKey
+        || mouseEvent.shiftKey
+        || (mouseEvent.button !== undefined && mouseEvent.button !== 0),
+      );
+      if (modified) return;
+      event.preventDefault();
+    }
+    onPress();
+  };
 
   return (
     <InteractiveSurface
@@ -253,7 +275,7 @@ function FloatingTabItem({
       accessibilityState={{ selected: focused }}
       disabled={disabled}
       onLongPress={onLongPress}
-      onPress={onPress}
+      onPress={handlePress}
       pressedStyle={reduceMotionEnabled ? styles.tabPressedReduced : styles.tabPressed}
       style={styles.tab}
       testID={testID}

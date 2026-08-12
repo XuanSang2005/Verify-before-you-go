@@ -147,12 +147,12 @@ it('keeps the exact Screen 01 illustration decorative and reads privacy copy onc
   expect(image?.getAttribute('alt') ?? '').toBe('');
 
   const text = harness.container.textContent ?? '';
-  expect(text.match(/screenshot pixels are not uploaded, read by OCR or analysed; the API receives only screenshotProvided\./gu)).toHaveLength(1);
+  expect(text.match(/For a check, the API receives submitted posting text, URL text and screenshotProvided for transient analysis\. Screenshot pixels are not uploaded, OCR’d or analysed, and check content is not persisted\./gu)).toHaveLength(1);
   expect(text.match(/Nothing is published automatically\./gu)).toHaveLength(1);
   await cleanup(harness.container, harness.root);
 });
 
-it('keeps exactly one Home parent selected and Home remains a real route from How It Works', async () => {
+it('keeps exactly one Home parent selected and ordinary Home click navigates once without reloading', async () => {
   const fixture = createHowItWorksTabBarProps();
   const harness = await renderNodeAtWidth(
     <FloatingTabBar {...fixture.props as unknown as Parameters<typeof FloatingTabBar>[0]} />,
@@ -168,7 +168,38 @@ it('keeps exactly one Home parent selected and Home remains a real route from Ho
   expect(home?.tagName).toBe('A');
   expect(home?.getAttribute('href')).toBe('/');
 
-  await act(async () => home?.click());
+  const ordinaryClick = new MouseEvent('click', {
+    bubbles: true,
+    button: 0,
+    cancelable: true,
+  });
+  await act(async () => home?.dispatchEvent(ordinaryClick));
+  expect(ordinaryClick.defaultPrevented).toBe(true);
+  expect(fixture.navigation.navigate).toHaveBeenCalledTimes(1);
   expect(fixture.navigation.navigate).toHaveBeenCalledWith('index', undefined);
+  await cleanup(harness.container, harness.root);
+});
+
+it.each([
+  ['Cmd', { metaKey: true }],
+  ['Ctrl', { ctrlKey: true }],
+  ['Shift', { shiftKey: true }],
+])('%s-click preserves native new-tab behavior without internal navigation', async (_label, modifier) => {
+  const fixture = createHowItWorksTabBarProps();
+  const harness = await renderNodeAtWidth(
+    <FloatingTabBar {...fixture.props as unknown as Parameters<typeof FloatingTabBar>[0]} />,
+    390,
+  );
+  const home = harness.container.querySelector<HTMLAnchorElement>('[data-testid="floating-tab-index"]');
+  const modifiedClick = new MouseEvent('click', {
+    bubbles: true,
+    button: 0,
+    cancelable: true,
+    ...modifier,
+  });
+
+  await act(async () => home?.dispatchEvent(modifiedClick));
+  expect(modifiedClick.defaultPrevented).toBe(false);
+  expect(fixture.navigation.navigate).not.toHaveBeenCalled();
   await cleanup(harness.container, harness.root);
 });

@@ -19,13 +19,13 @@ test('CP15 truthfully distinguishes local data from deliberate backend actions',
   const copy = JSON.stringify(deviceAndServerFacts);
   assert.match(copy, /Evidence images stay on this device and are not uploaded/u);
   assert.match(copy, /secure device storage/u);
-  assert.match(copy, /native saves the recovery key automatically/u);
+  assert.match(copy, /native automatically attempts to save a delivered recovery key in secure device storage, and the receipt reports whether this succeeded/u);
   assert.match(copy, /Web does not save it automatically; copy or download it, or enter it again later/u);
   assert.match(copy, /full identifier, factual description, selected behaviours, privacy choices and redacted preview/u);
   assert.match(copy, /server encrypts the private identifier and description/u);
   assert.match(copy, /public redacted derivative is stored only when you enable the corresponding permission/u);
-  assert.match(copy, /screenshot pixels are not uploaded, read by OCR or analysed/u);
-  assert.match(copy, /API receives only screenshotProvided/u);
+  assert.match(copy, /API receives submitted posting text, URL text and screenshotProvided for transient analysis/u);
+  assert.match(copy, /Screenshot pixels are not uploaded, OCR’d or analysed, and check content is not persisted/u);
 });
 
 test('CP15 reuses the exact first illustration bytes embedded in Original HTML Screen 01', () => {

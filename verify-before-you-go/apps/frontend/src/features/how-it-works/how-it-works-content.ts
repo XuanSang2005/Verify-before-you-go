@@ -28,14 +28,14 @@ export const deviceAndServerFacts = [
     title: 'On this device',
     icon: 'phone-portrait-outline' as const,
     body: 'Evidence images stay on this device and are not uploaded. Checklist and quiz progress, report drafts and saved public copies also use local device or browser storage.',
-    note: 'After a successful submission, native saves the recovery key automatically in secure device storage. Web does not save it automatically; copy or download it, or enter it again later.',
+    note: 'After a successful submission, native automatically attempts to save a delivered recovery key in secure device storage, and the receipt reports whether this succeeded. Web does not save it automatically; copy or download it, or enter it again later.',
   },
   {
     id: 'server',
     title: 'Sent when you choose',
     icon: 'swap-horizontal-outline' as const,
     body: 'A private report sends the full identifier, factual description, selected behaviours, privacy choices and redacted preview to the backend. The server encrypts the private identifier and description.',
-    note: 'A public redacted derivative is stored only when you enable the corresponding permission. In the checker, screenshot pixels are not uploaded, read by OCR or analysed; the API receives only screenshotProvided.',
+    note: 'A public redacted derivative is stored only when you enable the corresponding permission. For a check, the API receives submitted posting text, URL text and screenshotProvided for transient analysis. Screenshot pixels are not uploaded, OCR’d or analysed, and check content is not persisted.',
   },
 ] as const;
 
