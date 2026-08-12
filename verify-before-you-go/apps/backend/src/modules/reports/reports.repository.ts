@@ -43,6 +43,7 @@ export interface ReportsRepository {
   findByIdempotencyHash: (hash: string) => Promise<RecruitmentReportRecord | null>;
   create: (input: CreateRecruitmentReportInput) => Promise<RecruitmentReportRecord>;
   clearRecoveryKeyDelivery: (publicId: string) => Promise<void>;
+  clearExpiredRecoveryKeyDeliveries: (cutoff: Date) => Promise<number>;
 }
 
 const subjectTypeToPrisma: Record<ReportSubjectType, RecruitmentReportSubjectType> = {
@@ -129,6 +130,19 @@ export function createPrismaReportsRepository(prisma: PrismaClient): ReportsRepo
         },
       });
     },
+    async clearExpiredRecoveryKeyDeliveries(cutoff) {
+      const result = await prisma.recruitmentReport.updateMany({
+        where: {
+          recoveryKeyDeliveryCiphertext: { not: null },
+          recoveryKeyDeliverUntil: { lte: cutoff },
+        },
+        data: {
+          recoveryKeyDeliveryCiphertext: null,
+          recoveryKeyDeliverUntil: null,
+        },
+      });
+      return result.count;
+    },
   };
 }
 
@@ -138,4 +152,5 @@ export const unavailableReportsRepository: ReportsRepository = {
     throw new Error('Reports repository is unavailable.');
   },
   clearRecoveryKeyDelivery: async () => undefined,
+  clearExpiredRecoveryKeyDeliveries: async () => 0,
 };

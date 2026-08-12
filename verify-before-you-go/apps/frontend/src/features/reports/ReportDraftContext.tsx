@@ -89,7 +89,13 @@ export function ReportDraftProvider({
     const isActive = () => mountedRef.current && hydrateAttemptRef.current === attempt;
     await evidenceLifecycle.whenIdle();
     if (!isActive()) return;
-    const loaded = await persistence.hydrate(isActive);
+    let loaded: Awaited<ReturnType<ReportDraftPersistencePort['hydrate']>>;
+    try {
+      loaded = await persistence.hydrate(isActive);
+    } catch (error) {
+      if (!isActive()) return;
+      throw error;
+    }
     if (!isActive()) return;
     const evidenceResult = await evidenceLifecycle.reconcile(loaded.draft);
     if (!isActive()) return;
@@ -140,11 +146,13 @@ export function ReportDraftProvider({
   }, [updateDraft]);
 
   const clearForNewReport = useCallback(async () => {
+    hydrateAttemptRef.current += 1;
     await evidenceLifecycle.whenIdle();
     const emptyDraft = createEmptyReportDraft();
     const write = await persistence.enqueue(emptyDraft);
     if (write.status === 'failed') throw write.error;
     const evidenceResult = await evidenceLifecycle.reconcile(emptyDraft);
+    if (!mountedRef.current) return;
     storageReadSucceededRef.current = true;
     commitDraft(evidenceResult.draft);
     setRecoveryNotice(evidenceResult.recoveryNotice);

@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 
 import type { ReportsRepository } from './reports.repository.js';
+import { RecoveryDeliveryExpiryCleaner } from './reports.recovery-cleanup.js';
 import {
   ReportIdempotencyConflictError,
   submitRecruitmentReport,
@@ -104,6 +105,14 @@ export async function registerReportsRoutes(
   reportSecuritySecret: string,
 ): Promise<void> {
   const rateLimit = createReportRateLimit();
+  const expiryCleaner = new RecoveryDeliveryExpiryCleaner(repository, {
+    onError: () => app.log.error(
+      { code: 'REPORT_RECOVERY_DELIVERY_CLEANUP_FAILED' },
+      'Expired recovery delivery cleanup failed',
+    ),
+  });
+  app.addHook('onReady', async () => expiryCleaner.start());
+  app.addHook('onClose', async () => expiryCleaner.stop());
   app.post(
     '/api/v1/reports',
     {

@@ -74,6 +74,9 @@ function createMemoryRepository(): ReportsRepository & {
         }
       }
     },
+    async clearExpiredRecoveryKeyDeliveries() {
+      return 0;
+    },
   };
 }
 
@@ -124,16 +127,16 @@ test('same payload retries only re-deliver the random key inside the bounded del
     createPublicId: () => 'R-ZYXWVUTSRQPONMLK',
     now: () => new Date('2026-08-11T10:05:00.000Z'),
   });
-  const retryAfterWindow = await submitRecruitmentReport(repository, request, idempotencyKey, securitySecret, {
+  const retryAtExpiry = await submitRecruitmentReport(repository, request, idempotencyKey, securitySecret, {
     ...deterministicDependencies,
-    now: () => new Date(Date.parse('2026-08-11T10:00:00.000Z') + RECOVERY_KEY_DELIVERY_WINDOW_MS + 1),
+    now: () => new Date(Date.parse('2026-08-11T10:00:00.000Z') + RECOVERY_KEY_DELIVERY_WINDOW_MS),
   });
 
   assert.equal(first.recoveryKey, fixedRecoveryKey);
   assert.equal(retryInsideWindow.recoveryKey, fixedRecoveryKey);
-  assert.equal(retryAfterWindow.report.reportId, first.report.reportId);
-  assert.equal(retryAfterWindow.recoveryKey, null);
-  assert.equal(retryAfterWindow.recoveryKeyStatus, 'unavailable');
+  assert.equal(retryAtExpiry.report.reportId, first.report.reportId);
+  assert.equal(retryAtExpiry.recoveryKey, null);
+  assert.equal(retryAtExpiry.recoveryKeyStatus, 'unavailable');
   assert.deepEqual(repository.cleared, [first.report.reportId]);
   assert.equal(repository.created.length, 1);
 });
@@ -168,6 +171,7 @@ test('concurrent duplicate creation resolves to the authoritative stored report'
       throw new Error('unique constraint');
     },
     async clearRecoveryKeyDelivery() {},
+    async clearExpiredRecoveryKeyDeliveries() { return 0; },
   };
   const result = await submitRecruitmentReport(repository, request, idempotencyKey, securitySecret, deterministicDependencies);
   assert.equal(result.report.reportId, 'R-23456789ABCDEFGH');

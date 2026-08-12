@@ -13,6 +13,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
+    "db:cleanup:cp11-local-v1": "tsx prisma/cleanup-authorized-local-v1-reports.ts",
     "db:validate": "prisma validate"
   },
   "dependencies": {

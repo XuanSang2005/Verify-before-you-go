@@ -191,7 +191,7 @@ async function createIdempotentReceipt(
   if (record.submissionPayloadHash !== expectedPayloadHash) throw new ReportIdempotencyConflictError();
   if (!record.recoveryKeyDeliveryCiphertext
     || !record.recoveryKeyDeliverUntil
-    || record.recoveryKeyDeliverUntil.getTime() < now.getTime()) {
+    || record.recoveryKeyDeliverUntil.getTime() <= now.getTime()) {
     await repository.clearRecoveryKeyDelivery(record.publicId).catch(() => undefined);
     return createReceipt(record, null);
   }

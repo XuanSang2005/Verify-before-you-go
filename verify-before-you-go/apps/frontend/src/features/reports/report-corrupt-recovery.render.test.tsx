@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { router } from 'expo-router';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ReportDraftProvider } from './ReportDraftContext';
+import { ReportDraftProvider, useReportDraft } from './ReportDraftContext';
 import { ReportPrivacyScreen } from './ReportPrivacyScreen';
 import { ReportSubmissionProvider } from './ReportSubmissionContext';
 import { InvalidReportSubmissionAttemptError, type ReportSubmissionAttemptStoragePort } from './report-submission-attempt-storage';
@@ -130,6 +130,74 @@ describe('CP11 corrupt submission recovery controller', () => {
     expect(writes.at(-1)?.evidence).toEqual([]);
     expect(reconciled.at(-1)?.evidence).toEqual([]);
     expect(vi.mocked(router.replace)).toHaveBeenCalledWith('/reports/new');
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it('keeps the cleared draft authoritative when an older hydration resolves after corrupt reset', async () => {
+    const staleDraft = validDraft();
+    let resolveHydration!: (value: { draft: ReportDraft; status: 'valid' }) => void;
+    const hydration = new Promise<{ draft: ReportDraft; status: 'valid' }>((resolve) => {
+      resolveHydration = resolve;
+    });
+    const writes: ReportDraft[] = [];
+    let revision = 0;
+    const persistence: ReportDraftPersistencePort = {
+      async enqueue(draft) {
+        writes.push(draft);
+        revision += 1;
+        return { isLatest: true, revision, status: 'saved' };
+      },
+      hydrate: async () => hydration,
+      subscribe: () => () => undefined,
+      whenIdle: async () => undefined,
+    };
+    const evidenceLifecycle: ReportEvidenceLifecyclePort = {
+      add: async (draft) => ({ draft }),
+      remove: async (draft) => ({ draft }),
+      reconcile: async (draft) => ({ draft }),
+      whenIdle: async () => undefined,
+    };
+
+    function ContextProbe() {
+      const report = useReportDraft();
+      return (
+        <div>
+          <span data-testid="draft-identifier">{report.draft.identifier || 'empty'}</span>
+          <span data-testid="draft-storage-issue">{report.storageIssue?.message}</span>
+          <button data-testid="clear-draft" onClick={() => void report.clearForNewReport()} type="button">Clear</button>
+        </div>
+      );
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <ReportDraftProvider evidenceLifecycle={evidenceLifecycle} persistence={persistence}>
+          <ContextProbe />
+        </ReportDraftProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="clear-draft"]')?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(writes.at(-1)?.identifier).toBe('');
+
+    await act(async () => {
+      resolveHydration({ draft: staleDraft, status: 'valid' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="draft-identifier"]')?.textContent).toBe('empty');
+    expect(container.querySelector('[data-testid="draft-storage-issue"]')?.textContent).toBe('');
+    expect(writes.at(-1)?.identifier).toBe('');
 
     await act(async () => root.unmount());
     container.remove();

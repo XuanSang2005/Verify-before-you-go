@@ -99,6 +99,14 @@ The confirmed `/reports/receipt` screen shows the real report ID, submission tim
 
 CP11 submits structured facts and permissions. Images selected in CP10 remain in the device-local private draft and are not uploaded yet. No report is reviewed, verified, included in an alert or published automatically.
 
+Recovery-delivery ciphertext is cleared automatically at backend startup and once per minute after its ten-minute delivery window expires. Cleanup failures are logged using a fixed code without report IDs or private data and retry on the next bounded sweep.
+
+Three explicitly authorized local synthetic reports created with the legacy `aes-gcm-v1` format were removed during CP11 hardening. The guarded one-time command requires a loopback `verify_before_you_go` database, the exact allowlisted IDs/timestamps and cipher fingerprints, and a deletion count of exactly three inside one transaction. It fails closed on a fresh database or if any record differs:
+
+```bash
+npm run db:cleanup:cp11-local-v1 --workspace @vbyg/backend -- delete-exactly-3-authorized-local-synthetic-v1-reports
+```
+
 ## CP12 privacy-safe sharing
 
 Open `/share/preview` after a transient analysis to share an allowlisted summary of observed signal categories. The app never adds the recruitment posting, marked evidence, screenshot, screenshot metadata, full identifier, private report, case ID or recovery key to the shared text or recipient URL. A direct refresh without transient analysis shows the clearly labelled Screen 14 demo.

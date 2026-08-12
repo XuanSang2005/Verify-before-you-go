@@ -32,6 +32,7 @@ const request: ReportSubmissionRequest = {
 function createRouteRepository() {
   const records = new Map<string, RecruitmentReportRecord>();
   const created: CreateRecruitmentReportInput[] = [];
+  const cleanupCutoffs: Date[] = [];
   const repository: ReportsRepository = {
     async findByIdempotencyHash(hash) {
       return records.get(hash) ?? null;
@@ -50,8 +51,12 @@ function createRouteRepository() {
       return record;
     },
     async clearRecoveryKeyDelivery() {},
+    async clearExpiredRecoveryKeyDeliveries(cutoff) {
+      cleanupCutoffs.push(cutoff);
+      return 0;
+    },
   };
-  return { created, repository };
+  return { cleanupCutoffs, created, repository };
 }
 
 function buildReportsTestApp(repository: ReportsRepository, logger?: Parameters<typeof buildApp>[0]['logger']) {
@@ -65,7 +70,7 @@ function buildReportsTestApp(repository: ReportsRepository, logger?: Parameters<
 }
 
 test('POST /api/v1/reports creates a real private receipt with no raw key in storage', async () => {
-  const { created, repository } = createRouteRepository();
+  const { cleanupCutoffs, created, repository } = createRouteRepository();
   const app = await buildReportsTestApp(repository);
   const response = await app.inject({
     method: 'POST',
@@ -84,6 +89,7 @@ test('POST /api/v1/reports creates a real private receipt with no raw key in sto
   assert.equal(created.length, 1);
   assert.notEqual(created[0]?.recoveryKeyHash, payload.recoveryKey);
   assert.doesNotMatch(JSON.stringify(created[0]), new RegExp(payload.recoveryKey.replaceAll('-', ''), 'iu'));
+  assert.equal(cleanupCutoffs.length, 1);
   await app.close();
 });
 
@@ -155,6 +161,7 @@ test('repository failure returns a generic retryable response without echoing pr
     findByIdempotencyHash: async () => null,
     create: async () => { throw new Error('database failed'); },
     clearRecoveryKeyDelivery: async () => undefined,
+    clearExpiredRecoveryKeyDeliveries: async () => 0,
   });
   const response = await app.inject({
     method: 'POST',
