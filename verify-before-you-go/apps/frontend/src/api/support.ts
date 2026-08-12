@@ -53,7 +53,18 @@ export async function fetchSupportDirectory(
     });
   }
 
-  const payload: unknown = await response.json().catch(() => undefined);
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new SupportApiError({
+        kind: 'network',
+        message: 'The support directory response was interrupted. Check your connection and try again.',
+      });
+    }
+    payload = undefined;
+  }
   if (!response.ok) {
     const apiError = ApiErrorSchema.safeParse(payload);
     throw new SupportApiError({

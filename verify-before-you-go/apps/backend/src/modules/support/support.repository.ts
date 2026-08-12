@@ -3,6 +3,7 @@ import type {
   SupportContactKind,
   SupportCountry,
   SupportDataStatus,
+  SupportLanguageStatus,
 } from '@vbyg/contracts';
 
 import type {
@@ -12,6 +13,7 @@ import type {
   SupportContactKind as PrismaSupportContactKind,
   SupportCountry as PrismaSupportCountry,
   SupportDataStatus as PrismaSupportDataStatus,
+  SupportLanguageStatus as PrismaSupportLanguageStatus,
 } from '../../generated/prisma/client.js';
 
 export type SupportContactRecord = {
@@ -31,6 +33,7 @@ export type SupportContactRecord = {
   sourceOwner: string;
   sourceUrl: string;
   languages: string[];
+  languageStatus: SupportLanguageStatus;
   hours: string;
   lastReviewedAt: Date;
   nextReviewAt: Date;
@@ -54,6 +57,7 @@ const countryFromPrisma: Record<PrismaSupportCountry, SupportCountry> = {
 const kindFromPrisma: Record<PrismaSupportContactKind, SupportContactKind> = {
   EMERGENCY: 'emergency',
   EMBASSY: 'embassy',
+  CONSULAR: 'consular',
   ORGANIZATION: 'organization',
 };
 
@@ -65,6 +69,11 @@ const accessModeFromPrisma: Record<PrismaSupportAccessMode, SupportAccessMode> =
 const dataStatusFromPrisma: Record<PrismaSupportDataStatus, SupportDataStatus> = {
   REVIEWED_REFERENCE: 'reviewed-reference',
   SYNTHETIC_SUMMARY: 'synthetic-summary',
+};
+
+const languageStatusFromPrisma: Record<PrismaSupportLanguageStatus, SupportLanguageStatus> = {
+  CONFIRMED: 'confirmed',
+  UNCONFIRMED: 'unconfirmed',
 };
 
 function mapSupportContact(row: PrismaSupportContact): SupportContactRecord {
@@ -85,6 +94,7 @@ function mapSupportContact(row: PrismaSupportContact): SupportContactRecord {
     sourceOwner: row.sourceOwner,
     sourceUrl: row.sourceUrl,
     languages: row.languages,
+    languageStatus: languageStatusFromPrisma[row.languageStatus],
     hours: row.hours,
     lastReviewedAt: row.lastReviewedAt,
     nextReviewAt: row.nextReviewAt,

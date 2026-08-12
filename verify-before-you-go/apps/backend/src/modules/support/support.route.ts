@@ -4,6 +4,7 @@ import {
   SUPPORT_COUNTRIES,
   SUPPORT_DATA_STATUSES,
   SUPPORT_REVIEW_STATUSES,
+  SUPPORT_LANGUAGE_STATUSES,
   SupportDirectoryQuerySchema,
 } from '@vbyg/contracts';
 import type { FastifyInstance } from 'fastify';
@@ -35,7 +36,7 @@ const supportContactSchema = {
   required: [
     'id', 'country', 'countryLabel', 'kind', 'title', 'description', 'displayValue',
     'actionUri', 'actionLabel', 'accessMode', 'accessLabel', 'dataStatus', 'dataStatusLabel',
-    'sourceOwner', 'sourceUrl', 'languages', 'hours', 'lastReviewedAt', 'nextReviewAt',
+    'sourceOwner', 'sourceUrl', 'languages', 'languageStatus', 'hours', 'lastReviewedAt', 'nextReviewAt',
     'reviewStatus', 'sortOrder',
   ],
   properties: {
@@ -54,7 +55,8 @@ const supportContactSchema = {
     dataStatusLabel: { type: 'string' },
     sourceOwner: { type: 'string' },
     sourceUrl: { type: 'string', pattern: '^https://[^\\s]+$' },
-    languages: { type: 'array', minItems: 1, items: { type: 'string' } },
+    languages: { type: 'array', items: { type: 'string' } },
+    languageStatus: { type: 'string', enum: [...SUPPORT_LANGUAGE_STATUSES] },
     hours: { type: 'string' },
     lastReviewedAt: { type: 'string', format: 'date-time' },
     nextReviewAt: { type: 'string', format: 'date-time' },

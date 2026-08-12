@@ -1,15 +1,22 @@
 import type { SupportDirectoryResponse } from '@vbyg/contracts';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   fetchSupportDirectory,
   isSupportApiError,
 } from '@/api/support';
 
+import { bundledSupportDirectory } from './support-bundle';
 import {
   loadCachedSupportDirectory,
   saveCachedSupportDirectory,
+  type CachedSupportDirectory,
 } from './support-cache';
+import {
+  supportDirectoryCoordinator,
+  SupportDirectoryCoordinator,
+  type SupportRequestAuthority,
+} from './support-coordinator';
 
 export type SupportDirectoryLoadStatus =
   | 'loading'
@@ -19,10 +26,15 @@ export type SupportDirectoryLoadStatus =
   | 'service-unavailable'
   | 'error';
 
+export type SupportDirectoryFallbackKind = 'cache' | 'bundle';
+
 export type SupportDirectoryState = {
   status: SupportDirectoryLoadStatus;
   response?: SupportDirectoryResponse;
   cachedAt?: string;
+  bundledAt?: string;
+  fallbackKind?: SupportDirectoryFallbackKind;
+  fallbackNotice?: string;
   message?: string;
   refreshing?: boolean;
   savedOffline?: boolean;
@@ -34,39 +46,97 @@ export type SupportDirectoryDependencies = {
   fetchDirectory: typeof fetchSupportDirectory;
   loadCache: typeof loadCachedSupportDirectory;
   saveCache: typeof saveCachedSupportDirectory;
+  coordinator?: SupportDirectoryCoordinator;
 };
 
 const defaultDependencies: SupportDirectoryDependencies = {
   fetchDirectory: fetchSupportDirectory,
   loadCache: loadCachedSupportDirectory,
   saveCache: saveCachedSupportDirectory,
+  coordinator: supportDirectoryCoordinator,
 };
+
+export class SupersededSupportDirectoryAttemptError extends Error {
+  constructor() {
+    super('The support-directory request was superseded.');
+    this.name = 'SupersededSupportDirectoryAttemptError';
+  }
+}
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-export async function loadSupportDirectoryState(
-  dependencies: SupportDirectoryDependencies = defaultDependencies,
-): Promise<SupportDirectoryState> {
-  let cached = null;
+function assertAuthority(
+  coordinator: SupportDirectoryCoordinator,
+  authority: SupportRequestAuthority,
+) {
+  if (!coordinator.isRequestAuthoritative(authority)) {
+    throw new SupersededSupportDirectoryAttemptError();
+  }
+}
+
+function selectFallback(cache: CachedSupportDirectory | null) {
+  if (cache) {
+    const cacheTime = new Date(cache.data.fetchedAt).getTime();
+    const bundleTime = new Date(bundledSupportDirectory.response.fetchedAt).getTime();
+    if (cacheTime > bundleTime) {
+      return {
+        kind: 'cache' as const,
+        response: cache.data,
+        timestamp: cache.cachedAt,
+      };
+    }
+  }
+  return {
+    kind: 'bundle' as const,
+    response: bundledSupportDirectory.response,
+    timestamp: bundledSupportDirectory.bundledAt,
+  };
+}
+
+async function readFallback(
+  dependencies: SupportDirectoryDependencies,
+  coordinator: SupportDirectoryCoordinator,
+  authority: SupportRequestAuthority,
+) {
+  let cache: CachedSupportDirectory | null = null;
   let cacheReadFailed = false;
   try {
-    cached = await dependencies.loadCache();
+    cache = await coordinator.readAtMutationBoundary(dependencies.loadCache);
   } catch {
     cacheReadFailed = true;
   }
+  assertAuthority(coordinator, authority);
+  return { ...selectFallback(cache), cacheReadFailed };
+}
+
+export async function loadSupportDirectoryState(
+  dependencies: SupportDirectoryDependencies = defaultDependencies,
+  authority?: SupportRequestAuthority,
+): Promise<SupportDirectoryState> {
+  const coordinator = dependencies.coordinator ?? supportDirectoryCoordinator;
+  const requestAuthority = authority ?? coordinator.beginRequest();
 
   try {
     const response = await dependencies.fetchDirectory();
+    assertAuthority(coordinator, requestAuthority);
     try {
-      await dependencies.saveCache(response);
+      const saved = await coordinator.saveForRequest(
+        requestAuthority,
+        response,
+        dependencies.saveCache,
+      );
+      assertAuthority(coordinator, requestAuthority);
+      if (!saved) throw new SupersededSupportDirectoryAttemptError();
       return {
         status: response.contacts.length ? 'ready' : 'empty',
         response,
         savedOffline: true,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof SupersededSupportDirectoryAttemptError) throw error;
+      assertAuthority(coordinator, requestAuthority);
       return {
         status: response.contacts.length ? 'ready' : 'empty',
         response,
@@ -75,31 +145,44 @@ export async function loadSupportDirectoryState(
       };
     }
   } catch (error) {
+    if (error instanceof SupersededSupportDirectoryAttemptError) throw error;
+    assertAuthority(coordinator, requestAuthority);
+
     if (isSupportApiError(error) && error.kind === 'network') {
-      if (cached) {
-        return {
-          status: 'offline',
-          response: cached.data,
-          cachedAt: cached.cachedAt,
-          message: 'Offline · showing saved contacts',
-          savedOffline: true,
-        };
-      }
+      const fallback = await readFallback(dependencies, coordinator, requestAuthority);
       return {
-        status: 'error',
-        message: cacheReadFailed
-          ? 'The support directory is offline and saved contacts could not be read on this device.'
-          : error.message,
+        status: 'offline',
+        response: fallback.response,
+        cachedAt: fallback.kind === 'cache' ? fallback.timestamp : undefined,
+        bundledAt: fallback.kind === 'bundle' ? fallback.timestamp : undefined,
+        fallbackKind: fallback.kind,
+        message: fallback.kind === 'cache'
+          ? 'Offline · showing saved contacts'
+          : 'Offline · showing bundled contacts',
+        savedOffline: fallback.kind === 'cache',
+        fallbackNotice: fallback.kind === 'bundle'
+          ? bundledSupportDirectory.availabilityNotice
+          : fallback.cacheReadFailed
+            ? 'Saved contacts are shown, but storage could not be rechecked.'
+            : undefined,
       };
     }
 
-    if (isSupportApiError(error) && error.kind === 'http' && (error.status ?? 0) >= 500 && cached) {
+    if (isSupportApiError(error) && error.kind === 'http' && (error.status ?? 0) >= 500) {
+      const fallback = await readFallback(dependencies, coordinator, requestAuthority);
       return {
         status: 'service-unavailable',
-        response: cached.data,
-        cachedAt: cached.cachedAt,
-        message: 'Service unavailable · showing saved contacts',
-        savedOffline: true,
+        response: fallback.response,
+        cachedAt: fallback.kind === 'cache' ? fallback.timestamp : undefined,
+        bundledAt: fallback.kind === 'bundle' ? fallback.timestamp : undefined,
+        fallbackKind: fallback.kind,
+        message: fallback.kind === 'cache'
+          ? 'Service unavailable · showing saved contacts'
+          : 'Service unavailable · showing bundled contacts',
+        savedOffline: fallback.kind === 'cache',
+        fallbackNotice: fallback.kind === 'bundle'
+          ? bundledSupportDirectory.availabilityNotice
+          : undefined,
       };
     }
 
@@ -113,6 +196,8 @@ export async function loadSupportDirectoryState(
 export function useSupportDirectory(
   dependencies: SupportDirectoryDependencies = defaultDependencies,
 ) {
+  const coordinator = dependencies.coordinator ?? supportDirectoryCoordinator;
+  const stableDependencies = useMemo(() => dependencies, [dependencies]);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<SupportDirectoryState>({ status: 'loading' });
   const saveInFlightRef = useRef(false);
@@ -124,12 +209,19 @@ export function useSupportDirectory(
   }, []);
 
   useEffect(() => {
-    let active = true;
-    void loadSupportDirectoryState(dependencies).then((nextState) => {
-      if (active) setState(nextState);
+    const authority = coordinator.beginRequest();
+    void loadSupportDirectoryState(stableDependencies, authority).then((nextState) => {
+      if (mountedRef.current && coordinator.isRequestAuthoritative(authority)) {
+        setState(nextState);
+      }
+    }).catch((error: unknown) => {
+      if (error instanceof SupersededSupportDirectoryAttemptError) return;
+      if (mountedRef.current && coordinator.isRequestAuthoritative(authority)) {
+        setState({ status: 'error', message: errorMessage(error, 'The support directory could not be loaded.') });
+      }
     });
-    return () => { active = false; };
-  }, [attempt, dependencies]);
+    return () => { coordinator.revokeRequest(authority); };
+  }, [attempt, coordinator, stableDependencies]);
 
   const retry = useCallback(() => {
     if (state.refreshing) return;
@@ -141,6 +233,7 @@ export function useSupportDirectory(
 
   const saveOffline = useCallback(async () => {
     if (!state.response || saveInFlightRef.current) return;
+    const response = state.response;
     saveInFlightRef.current = true;
     setState((current) => ({
       ...current,
@@ -148,8 +241,9 @@ export function useSupportDirectory(
       storageMessage: 'Saving contacts on this device…',
     }));
     try {
-      await dependencies.saveCache(state.response);
+      const saved = await coordinator.saveManual(response, dependencies.saveCache);
       if (!mountedRef.current) return;
+      if (!saved) return;
       setState((current) => ({
         ...current,
         savedOffline: true,
@@ -167,7 +261,7 @@ export function useSupportDirectory(
     } finally {
       saveInFlightRef.current = false;
     }
-  }, [dependencies, state.response]);
+  }, [coordinator, dependencies.saveCache, state.response]);
 
   return { ...state, retry, saveOffline };
 }

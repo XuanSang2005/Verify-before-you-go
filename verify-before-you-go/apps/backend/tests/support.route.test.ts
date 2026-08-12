@@ -47,7 +47,35 @@ test('GET /api/v1/support-contacts returns both country packs with explicit stat
   assert.ok(payload.contacts.some((contact) => contact.kind === 'emergency'));
   assert.ok(payload.contacts.some((contact) => contact.kind === 'embassy'));
   assert.ok(payload.contacts.some((contact) => contact.kind === 'organization'));
+  assert.ok(payload.contacts.some((contact) => contact.kind === 'consular'));
   assert.ok(payload.contacts.every((contact) => contact.accessMode === 'cellular' || contact.accessMode === 'internet'));
+  for (const country of ['cambodia', 'vietnam'] as const) {
+    const countryContacts = payload.contacts.filter((contact) => contact.country === country);
+    assert.ok(countryContacts.some((contact) => contact.kind === 'emergency'));
+    assert.ok(countryContacts.some((contact) => contact.kind === 'organization'));
+    assert.ok(countryContacts.some((contact) => contact.kind === 'embassy' || contact.kind === 'consular'));
+  }
+  await app.close();
+});
+
+test('support route returns exact emergency actions and never exposes retired contacts', async () => {
+  const app = await buildSupportTestApp();
+  const response = await app.inject({ method: 'GET', url: '/api/v1/support-contacts' });
+  const payload = SupportDirectoryResponseSchema.parse(response.json());
+  const actions = new Map(payload.contacts.map((contact) => [
+    `${contact.country}:${contact.displayValue}`,
+    contact.actionUri,
+  ]));
+  for (const [key, uri] of [
+    ['cambodia:117', 'tel:117'],
+    ['cambodia:119', 'tel:119'],
+    ['cambodia:1288', 'tel:1288'],
+    ['vietnam:113', 'tel:113'],
+    ['vietnam:115', 'tel:115'],
+    ['vietnam:111', 'tel:111'],
+  ] as const) assert.equal(actions.get(key), uri);
+  assert.ok(!payload.contacts.some((contact) => contact.id === 'support-cambodia-legal-aid'));
+  assert.doesNotMatch(JSON.stringify(payload), /lackhmer\.org/i);
   await app.close();
 });
 

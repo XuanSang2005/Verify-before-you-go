@@ -23,7 +23,8 @@ const contact = {
   dataStatusLabel: 'Reviewed emergency reference',
   sourceOwner: 'Telecommunication Regulator of Cambodia',
   sourceUrl: 'https://www.trc.gov.kh/en/resources/emergency-numbers/',
-  languages: ['Confirm with provider'],
+  languages: [],
+  languageStatus: 'unconfirmed',
   hours: 'Availability not independently confirmed',
   lastReviewedAt: '2026-08-12T00:00:00.000Z',
   nextReviewAt: '2026-09-12T00:00:00.000Z',
@@ -42,6 +43,25 @@ test('support contact distinguishes access, data and review status', () => {
   assert.equal(parsed.accessMode, 'cellular');
   assert.equal(parsed.dataStatus, 'reviewed-reference');
   assert.equal(parsed.reviewStatus, 'current');
+  assert.equal(parsed.languageStatus, 'unconfirmed');
+});
+
+test('support language metadata separates confirmed names from unknown availability', () => {
+  assert.equal(SupportContactSchema.safeParse({
+    ...contact,
+    languageStatus: 'confirmed',
+    languages: [],
+  }).success, false);
+  assert.equal(SupportContactSchema.safeParse({
+    ...contact,
+    languageStatus: 'unconfirmed',
+    languages: ['Confirm with provider'],
+  }).success, false);
+  assert.equal(SupportContactSchema.safeParse({
+    ...contact,
+    languageStatus: 'confirmed',
+    languages: ['Khmer'],
+  }).success, true);
 });
 
 test('support actions fail closed on unsafe or mismatched URI schemes', () => {

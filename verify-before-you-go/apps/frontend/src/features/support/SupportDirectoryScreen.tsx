@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { SupportContact, SupportCountry } from '@vbyg/contracts';
 import * as Clipboard from 'expo-clipboard';
-import { Link } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useMemo, useState } from 'react';
 import {
@@ -27,6 +26,8 @@ import {
   isSupportReviewDue,
   supportCountries,
 } from './support-model';
+import { copySupportValue } from './support-actions';
+import { SupportContactLink, SupportInternalLink } from './SupportContactLink';
 import { useSupportDirectory } from './use-support-directory';
 
 const cardShadow = Platform.select({
@@ -56,6 +57,33 @@ const howItWorksLinkStyle = StyleSheet.flatten<ViewStyle>({
   borderTopColor: '#E9EDF1',
 });
 
+const primaryContactActionStyle = StyleSheet.flatten<ViewStyle>({
+  minWidth: 0,
+  minHeight: 48,
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 7,
+  paddingHorizontal: 12,
+  borderWidth: 2,
+  borderColor: colors.navy,
+  borderRadius: 999,
+  backgroundColor: colors.navy,
+});
+
+const organizationActionStyle = StyleSheet.flatten<ViewStyle>({
+  minHeight: 48,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  paddingHorizontal: 13,
+  borderWidth: 1,
+  borderColor: colors.paleBlue,
+  borderRadius: 999,
+  backgroundColor: '#F8FCFF',
+});
+
 export function SupportDirectoryScreen({
   mascotSource = require('../../../assets/mascots/help-wheelchair-screen08.jpg'),
 }: {
@@ -68,9 +96,13 @@ export function SupportDirectoryScreen({
     () => filterSupportContacts(directory.response?.contacts ?? [], country),
     [country, directory.response?.contacts],
   );
-  const phoneContacts = contacts.filter((contact) => contact.accessMode === 'cellular');
+  const emergencyContacts = contacts.filter((contact) => contact.kind === 'emergency');
+  const consularContacts = contacts.filter(
+    (contact) => contact.kind === 'embassy' || contact.kind === 'consular',
+  );
   const organizations = contacts.filter((contact) => contact.kind === 'organization');
   const hasResponse = Boolean(directory.response);
+  const bundledAvailable = directory.fallbackKind === 'bundle';
 
   const openUri = async (contact: SupportContact) => {
     setActionMessage(undefined);
@@ -85,11 +117,10 @@ export function SupportDirectoryScreen({
 
   const copyValue = async (contact: SupportContact) => {
     setActionMessage(undefined);
-    try {
-      const result = await Clipboard.setStringAsync(contact.displayValue) as boolean | void;
-      if (result === false) throw new Error('copy failed');
+    const result = await copySupportValue(contact.displayValue, Clipboard.setStringAsync);
+    if (result === 'copied') {
       setActionMessage(`${contact.displayValue} copied.`);
-    } catch {
+    } else {
       setActionMessage('Could not copy this contact.');
     }
   };
@@ -158,12 +189,15 @@ export function SupportDirectoryScreen({
             title="Support directory unavailable"
           />
         ) : null}
-        {(directory.status === 'offline' || directory.status === 'service-unavailable') && directory.cachedAt ? (
+        {(directory.status === 'offline' || directory.status === 'service-unavailable')
+          && (directory.cachedAt || directory.bundledAt) ? (
           <SavedCopyNotice
-            cachedAt={directory.cachedAt}
+            fallbackKind={directory.fallbackKind ?? 'cache'}
+            fallbackNotice={directory.fallbackNotice}
             message={directory.message ?? 'Showing saved contacts'}
             onRetry={directory.retry}
             refreshing={Boolean(directory.refreshing)}
+            timestamp={directory.cachedAt ?? directory.bundledAt ?? ''}
           />
         ) : null}
 
@@ -176,9 +210,15 @@ export function SupportDirectoryScreen({
               </Text>
             </View>
 
-            {phoneContacts.length ? (
-              <View accessibilityLabel={`${country === 'cambodia' ? 'Cambodia' : 'Viet Nam'} phone contacts`} style={styles.contactList}>
-                {phoneContacts.map((contact) => (
+            {emergencyContacts.length ? (
+              <View
+                accessibilityLabel={`${country === 'cambodia' ? 'Cambodia' : 'Viet Nam'} emergency contacts`}
+                role="region"
+                style={[styles.directorySection, styles.emergencySection]}
+              >
+                <Text accessibilityRole="header" aria-level={2} style={styles.directorySectionTitle}>Emergency</Text>
+                <Text style={styles.directorySectionHint}>Call only when you choose. Cellular service is required.</Text>
+                {emergencyContacts.map((contact) => (
                   <PhoneContactCard
                     contact={contact}
                     key={contact.id}
@@ -188,7 +228,7 @@ export function SupportDirectoryScreen({
                 ))}
               </View>
             ) : (
-              <StatePanel body="No phone contacts are available in this country pack." title="No saved phone contacts" />
+              <StatePanel body="No emergency contacts are available in this country pack." title="No saved emergency contacts" />
             )}
 
             <View style={styles.travelNote}>
@@ -196,8 +236,30 @@ export function SupportDirectoryScreen({
               <Text style={styles.travelNoteText}>Going abroad? Save the destination numbers too, and verify them again before travel.</Text>
             </View>
 
-            <View style={styles.organizationsSection}>
-              <Text style={styles.sectionLabel}>Organizations · Needs a connection</Text>
+            <View
+              accessibilityLabel="Embassy and consular guidance"
+              role="region"
+              style={styles.directorySection}
+            >
+              <Text accessibilityRole="header" aria-level={2} style={styles.directorySectionTitle}>Embassy / Consular</Text>
+              {consularContacts.map((contact) => contact.accessMode === 'cellular' ? (
+                <PhoneContactCard
+                  contact={contact}
+                  key={contact.id}
+                  onCopy={() => void copyValue(contact)}
+                  onOpen={() => void openUri(contact)}
+                />
+              ) : (
+                <OrganizationCard
+                  contact={contact}
+                  key={contact.id}
+                  onOpen={() => void openUri(contact)}
+                />
+              ))}
+            </View>
+
+            <View accessibilityLabel="Support organizations" role="region" style={styles.directorySection}>
+              <Text accessibilityRole="header" aria-level={2} style={styles.directorySectionTitle}>Organizations</Text>
               {organizations.map((contact) => (
                 <OrganizationCard
                   contact={contact}
@@ -231,12 +293,16 @@ export function SupportDirectoryScreen({
               </InteractiveSurface>
               <View style={styles.savedState}>
                 <Ionicons
-                  color={directory.savedOffline ? '#2B7A35' : colors.quiet}
-                  name={directory.savedOffline ? 'checkmark-circle-outline' : 'cloud-offline-outline'}
+                  color={directory.savedOffline || bundledAvailable ? '#2B7A35' : colors.quiet}
+                  name={directory.savedOffline || bundledAvailable ? 'checkmark-circle-outline' : 'cloud-offline-outline'}
                   size={18}
                 />
                 <Text style={styles.savedStateText}>
-                  {directory.savedOffline ? 'Saved on this device' : 'Offline copy not confirmed'}
+                  {directory.savedOffline
+                    ? 'Saved on this device'
+                    : bundledAvailable
+                      ? 'Included with this app'
+                      : 'Offline copy not confirmed'}
                 </Text>
               </View>
               {directory.storageMessage ? (
@@ -249,19 +315,15 @@ export function SupportDirectoryScreen({
               <Text style={styles.privacyNoticeText}>{directory.response?.directoryNotice}</Text>
             </View>
 
-            <Link asChild href="/how-it-works">
-              <InteractiveSurface
-                accessibilityLabel="How the support directory works"
-                accessibilityRole="link"
-                focusStyle={styles.controlFocused}
-                hoverStyle={styles.linkHovered}
-                pressedStyle={styles.controlPressed}
-                style={howItWorksLinkStyle}
-              >
-                <Text style={styles.howItWorksText}>How this directory works</Text>
-                <Ionicons color={colors.blue} name="chevron-forward" size={18} />
-              </InteractiveSurface>
-            </Link>
+            <SupportInternalLink
+              accessibilityLabel="How the support directory works"
+              href="/how-it-works"
+              hoverStyle={styles.linkHovered}
+              style={howItWorksLinkStyle}
+            >
+              <Text style={styles.howItWorksText}>How this directory works</Text>
+              <Ionicons color={colors.blue} name="chevron-forward" size={18} />
+            </SupportInternalLink>
           </>
         ) : null}
 
@@ -273,7 +335,7 @@ export function SupportDirectoryScreen({
   );
 }
 
-function PhoneContactCard({
+export function PhoneContactCard({
   contact,
   onCopy,
   onOpen,
@@ -299,20 +361,17 @@ function PhoneContactCard({
         </View>
       </View>
       <Text style={styles.contactDescription}>{contact.description}</Text>
-      <ContactMetadata contact={contact} reviewDue={reviewDue} />
       <View style={styles.contactActions}>
-        <InteractiveSurface
-          accessibilityLabel={contact.actionLabel}
-          accessibilityRole="link"
-          focusStyle={styles.controlFocused}
+        <SupportContactLink
+          accessibilityLabel={`${contact.actionLabel}. ${contact.accessLabel}`}
+          actionUri={contact.actionUri}
           hoverStyle={styles.secondaryActionHovered}
-          onPress={onOpen}
-          pressedStyle={styles.controlPressed}
-          style={styles.primaryContactAction}
+          onNativeOpen={onOpen}
+          style={primaryContactActionStyle}
         >
           <Ionicons color={colors.paper} name="call-outline" size={17} />
           <Text style={styles.primaryContactActionText}>{contact.actionLabel}</Text>
-        </InteractiveSurface>
+        </SupportContactLink>
         <InteractiveSurface
           accessibilityLabel={`Copy ${contact.displayValue}`}
           accessibilityRole="button"
@@ -326,11 +385,12 @@ function PhoneContactCard({
           <Text style={styles.secondaryContactActionText}>Copy</Text>
         </InteractiveSurface>
       </View>
+      <ContactMetadata contact={contact} reviewDue={reviewDue} />
     </View>
   );
 }
 
-function OrganizationCard({ contact, onOpen }: { contact: SupportContact; onOpen: () => void }) {
+export function OrganizationCard({ contact, onOpen }: { contact: SupportContact; onOpen: () => void }) {
   const reviewDue = isSupportReviewDue(contact);
   return (
     <View style={[styles.organizationCard, cardShadow]} testID={`support-contact-${contact.id}`}>
@@ -345,21 +405,19 @@ function OrganizationCard({ contact, onOpen }: { contact: SupportContact; onOpen
       </View>
       <View style={styles.internetPill}>
         <Ionicons color={colors.purple} name="globe-outline" size={14} />
-        <Text style={styles.internetPillText}>Internet required · Synthetic summary</Text>
+        <Text style={styles.internetPillText}>Internet required · Opens official source</Text>
       </View>
       <ContactMetadata contact={contact} reviewDue={reviewDue} />
-      <InteractiveSurface
-        accessibilityLabel={contact.actionLabel}
-        accessibilityRole="link"
-        focusStyle={styles.controlFocused}
+      <SupportContactLink
+        accessibilityLabel={`${contact.actionLabel}. ${contact.accessLabel}`}
+        actionUri={contact.actionUri}
         hoverStyle={styles.organizationActionHovered}
-        onPress={onOpen}
-        pressedStyle={styles.controlPressed}
-        style={styles.organizationAction}
+        onNativeOpen={onOpen}
+        style={organizationActionStyle}
       >
         <Text style={styles.organizationActionText}>{contact.actionLabel}</Text>
         <Ionicons color={colors.blue} name="open-outline" size={17} />
-      </InteractiveSurface>
+      </SupportContactLink>
     </View>
   );
 }
@@ -371,7 +429,12 @@ function ContactMetadata({ contact, reviewDue }: { contact: SupportContact; revi
         {reviewDue ? 'Review due · confirm before relying' : contact.dataStatusLabel}
       </Text>
       <Text style={styles.metadataText}>Source · {contact.sourceOwner}</Text>
-      <Text style={styles.metadataText}>Language · {contact.languages.join(' / ')} · {contact.hours}</Text>
+      <Text style={styles.metadataText}>
+        Language · {contact.languageStatus === 'confirmed'
+          ? contact.languages.join(' / ')
+          : 'Not confirmed'}
+      </Text>
+      <Text style={styles.metadataText}>Hours · {contact.hours}</Text>
       <Text style={styles.metadataText}>
         Reviewed {formatSupportReviewDate(contact.lastReviewedAt)} · Next review {formatSupportReviewDate(contact.nextReviewAt)}
       </Text>
@@ -421,21 +484,32 @@ function StatePanel({
 }
 
 function SavedCopyNotice({
-  cachedAt,
+  fallbackKind,
+  fallbackNotice,
   message,
   onRetry,
   refreshing,
+  timestamp,
 }: {
-  cachedAt: string;
+  fallbackKind: 'cache' | 'bundle';
+  fallbackNotice?: string;
   message: string;
   onRetry: () => void;
   refreshing: boolean;
+  timestamp: string;
 }) {
   return (
     <View style={styles.savedCopyNotice}>
       <View style={styles.savedCopyTextWrap}>
         <Text style={styles.savedCopyTitle}>{message}</Text>
-        <Text style={styles.savedCopyMeta}>Saved {formatSupportCacheTime(cachedAt)}</Text>
+        <Text style={styles.savedCopyMeta}>
+          {fallbackKind === 'bundle'
+            ? `Bundled review ${formatSupportReviewDate(timestamp)}`
+            : `Saved ${formatSupportCacheTime(timestamp)}`}
+        </Text>
+        {fallbackNotice ? (
+          <Text style={styles.savedCopyBody}>{fallbackNotice}</Text>
+        ) : null}
       </View>
       <InteractiveSurface
         accessibilityLabel={refreshing ? 'Refreshing support directory' : 'Retry support directory'}
@@ -484,8 +558,11 @@ const styles = StyleSheet.create({
   controlDisabled: { opacity: 0.58 },
   statusGuide: { minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: 9, padding: 12, borderWidth: 1, borderColor: '#D6E9FA', borderRadius: 12, backgroundColor: colors.ice },
   statusGuideText: { minWidth: 0, flex: 1, color: colors.body, fontFamily: typography.body, fontSize: 13, lineHeight: 20 },
-  contactList: { minWidth: 0, gap: 10 },
-  contactCard: { minWidth: 0, gap: 9, padding: 14, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.paper },
+  directorySection: { minWidth: 0, gap: 9 },
+  emergencySection: { padding: 10, borderWidth: 1, borderColor: '#C9E3F8', borderRadius: 16, backgroundColor: colors.ice },
+  directorySectionTitle: { color: colors.navy, fontFamily: typography.bodySemiBold, fontSize: 18, lineHeight: 24 },
+  directorySectionHint: { color: colors.body, fontFamily: typography.body, fontSize: 12, lineHeight: 18 },
+  contactCard: { minWidth: 0, gap: 6, padding: 11, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.paper },
   contactHeadingRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
   phoneIcon: { width: 36, height: 36, flexShrink: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: colors.ice },
   contactCopy: { minWidth: 0, flex: 1 },
@@ -493,21 +570,19 @@ const styles = StyleSheet.create({
   contactTitle: { color: colors.body, fontFamily: typography.body, fontSize: 14, lineHeight: 20 },
   noDataPill: { minHeight: 28, flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, borderWidth: 1, borderColor: colors.paleBlue, borderRadius: 7, backgroundColor: '#F8FCFF' },
   noDataText: { color: colors.blue, fontFamily: typography.monoMedium, fontSize: 11, lineHeight: 15, letterSpacing: 0.7, textTransform: 'uppercase' },
-  contactDescription: { color: colors.body, fontFamily: typography.body, fontSize: 13, lineHeight: 20 },
-  metadataPanel: { minWidth: 0, gap: 2, padding: 9, borderRadius: 9, backgroundColor: colors.canvas },
+  contactDescription: { color: colors.body, fontFamily: typography.body, fontSize: 13, lineHeight: 19 },
+  metadataPanel: { minWidth: 0, gap: 1, padding: 7, borderRadius: 8, backgroundColor: colors.canvas },
   metadataPanelDue: { backgroundColor: colors.amberSoft },
   metadataStatus: { color: colors.blue, fontFamily: typography.monoMedium, fontSize: 11, lineHeight: 16, letterSpacing: 0.2, textTransform: 'uppercase' },
   metadataStatusDue: { color: '#7A4D00' },
   metadataText: { color: colors.muted, fontFamily: typography.body, fontSize: 12, lineHeight: 18 },
   contactActions: { minWidth: 0, flexDirection: 'row', gap: 8 },
-  primaryContactAction: { minWidth: 0, minHeight: 48, flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 12, borderWidth: 2, borderColor: colors.navy, borderRadius: 999, backgroundColor: colors.navy },
   primaryContactActionText: { color: colors.paper, fontFamily: typography.bodySemiBold, fontSize: 13, lineHeight: 19, textAlign: 'center' },
   secondaryContactAction: { minWidth: 88, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 999, backgroundColor: colors.paper },
   secondaryContactActionText: { color: colors.blue, fontFamily: typography.bodySemiBold, fontSize: 13, lineHeight: 19 },
   secondaryActionHovered: { borderColor: colors.sky, backgroundColor: colors.ice },
   travelNote: { minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: 9, padding: 12, borderRadius: 12, backgroundColor: colors.ice },
   travelNoteText: { minWidth: 0, flex: 1, color: colors.body, fontFamily: typography.body, fontSize: 13, lineHeight: 20 },
-  organizationsSection: { minWidth: 0, gap: 10, marginTop: 4 },
   organizationCard: { minWidth: 0, gap: 9, padding: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.paper },
   organizationTopRow: { minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   organizationIcon: { width: 38, height: 38, flexShrink: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#F4EEFF' },
@@ -516,7 +591,6 @@ const styles = StyleSheet.create({
   organizationDescription: { color: colors.body, fontFamily: typography.body, fontSize: 13, lineHeight: 20 },
   internetPill: { minWidth: 0, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 5, paddingHorizontal: 8, borderRadius: 7, backgroundColor: '#F4EEFF' },
   internetPillText: { color: '#5C35AA', fontFamily: typography.monoMedium, fontSize: 11, lineHeight: 15, letterSpacing: 0.25, textTransform: 'uppercase' },
-  organizationAction: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 13, borderWidth: 1, borderColor: colors.paleBlue, borderRadius: 999, backgroundColor: '#F8FCFF' },
   organizationActionHovered: { borderColor: colors.blue, backgroundColor: colors.ice },
   organizationActionText: { minWidth: 0, flex: 1, color: colors.blue, fontFamily: typography.bodySemiBold, fontSize: 13, lineHeight: 19 },
   savePanel: { minWidth: 0, gap: 8, padding: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.paper },
@@ -544,6 +618,7 @@ const styles = StyleSheet.create({
   savedCopyTextWrap: { minWidth: 0, flex: 1 },
   savedCopyTitle: { color: colors.navy, fontFamily: typography.bodySemiBold, fontSize: 13, lineHeight: 19 },
   savedCopyMeta: { color: colors.muted, fontFamily: typography.mono, fontSize: 11, lineHeight: 16 },
+  savedCopyBody: { color: colors.body, fontFamily: typography.body, fontSize: 12, lineHeight: 18 },
   noticeRetry: { minWidth: 92, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 10, borderWidth: 1, borderColor: colors.paleBlue, borderRadius: 999, backgroundColor: colors.paper },
   noticeRetryText: { color: colors.blue, fontFamily: typography.bodySemiBold, fontSize: 12, lineHeight: 18 },
 });

@@ -130,6 +130,8 @@ Token verification confirms that the shared summary has not been modified and ha
 
 Returns the versioned public support directory used by `/help`. The frontend requests the complete pack once and filters Cambodia or Viet Nam locally so both country packs can remain available from the same offline cache. The optional strict `country` query accepts only `cambodia` or `vietnam`; unsupported or extra parameters return HTTP 400.
 
-Each entry states its contact kind, action URI, connectivity requirement, data-status label, source owner, source URL, languages, hours, last review, next review and current/review-due status. `reviewed-reference` means the public source was checked on the shown date; it is not a guarantee that help is currently available. Organization descriptions are `synthetic-summary` prototype copy and require opening the external source for current information.
+Each entry states its contact kind, action URI, connectivity requirement, data-status label, source owner, source URL, language names, a separate `languageStatus`, hours metadata, last review, next review and current/review-due status. An `unconfirmed` language status carries no placeholder language names. `reviewed-reference` means the public source was checked on the shown date; it is not a guarantee that help is currently available.
+
+The active seed separates Cambodia `117`, `119` and `1288`, and Viet Nam `113`, `115` and `111`, into individual actions. The removed Legal Aid of Cambodia URL is explicitly deactivated during seed reconciliation so an older row cannot remain visible. Both country packs also contain a reviewed consular/embassy route and organization route.
 
 The endpoint contains no account, device, location, report, offer or recovery-key data. The app never calls a number, opens an external site or shares location without an explicit user action.

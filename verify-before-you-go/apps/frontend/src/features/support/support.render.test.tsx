@@ -1,5 +1,6 @@
 import { act, cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SupportDirectoryScreen } from './SupportDirectoryScreen';
@@ -9,8 +10,10 @@ const actionMocks = vi.hoisted(() => ({
   saveOffline: vi.fn(),
 }));
 
+const clipboardMock = vi.hoisted(() => vi.fn(async (): Promise<boolean | void> => true));
+
 const stateFixture = vi.hoisted(() => ({
-  mode: 'ready' as 'ready' | 'offline' | 'error',
+  mode: 'ready' as 'ready' | 'offline' | 'bundle' | 'error',
 }));
 
 const directoryResponse = {
@@ -34,7 +37,8 @@ const directoryResponse = {
       dataStatusLabel: 'Reviewed emergency reference',
       sourceOwner: 'Telecommunication Regulator of Cambodia',
       sourceUrl: 'https://www.trc.gov.kh/en/resources/emergency-numbers/',
-      languages: ['Confirm with provider'],
+      languages: [],
+      languageStatus: 'unconfirmed' as const,
       hours: 'Availability not independently confirmed',
       lastReviewedAt: '2026-08-12T00:00:00.000Z',
       nextReviewAt: '2026-09-12T00:00:00.000Z',
@@ -53,11 +57,12 @@ const directoryResponse = {
       actionLabel: 'Open Chab Dai',
       accessMode: 'internet' as const,
       accessLabel: 'Internet connection required',
-      dataStatus: 'synthetic-summary' as const,
-      dataStatusLabel: 'Synthetic prototype summary',
+      dataStatus: 'reviewed-reference' as const,
+      dataStatusLabel: 'Reviewed organization reference',
       sourceOwner: 'Chab Dai Coalition',
       sourceUrl: 'https://www.chabdai.org/contact',
       languages: ['English'],
+      languageStatus: 'confirmed' as const,
       hours: 'Response hours not confirmed',
       lastReviewedAt: '2026-08-12T00:00:00.000Z',
       nextReviewAt: '2026-09-12T00:00:00.000Z',
@@ -78,9 +83,10 @@ const directoryResponse = {
       accessLabel: 'No data · cellular service required',
       dataStatus: 'reviewed-reference' as const,
       dataStatusLabel: 'Reviewed emergency reference',
-      sourceOwner: 'Ministry of Health of Viet Nam',
-      sourceUrl: 'https://moh.gov.vn/',
+      sourceOwner: 'Viet Nam National Hotline 111',
+      sourceUrl: 'https://tongdai111.vn/tin/tong-dai-dien-thoai-quoc-gia-ve-phong-chong-mua-ban-nguoi-la-so111',
       languages: ['Vietnamese'],
+      languageStatus: 'confirmed' as const,
       hours: 'Availability not independently confirmed',
       lastReviewedAt: '2026-08-12T00:00:00.000Z',
       nextReviewAt: '2026-09-12T00:00:00.000Z',
@@ -108,7 +114,7 @@ vi.mock('expo-status-bar', () => ({
 }));
 
 vi.mock('expo-clipboard', () => ({
-  setStringAsync: vi.fn(async () => true),
+  setStringAsync: clipboardMock,
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -117,6 +123,19 @@ vi.mock('react-native-safe-area-context', () => ({
 
 vi.mock('./use-support-directory', () => ({
   useSupportDirectory: () => {
+    if (stateFixture.mode === 'bundle') {
+      return {
+        bundledAt: '2026-08-12T00:00:00.000Z',
+        fallbackKind: 'bundle' as const,
+        fallbackNotice: 'Bundled contacts were reviewed on the date shown. Verify availability again when you have a connection.',
+        message: 'Offline · showing bundled contacts',
+        response: directoryResponse,
+        retry: actionMocks.retry,
+        saveOffline: actionMocks.saveOffline,
+        savedOffline: false,
+        status: 'offline' as const,
+      };
+    }
     if (stateFixture.mode === 'offline') {
       return {
         cachedAt: '2026-08-12T01:00:00.000Z',
@@ -171,6 +190,8 @@ beforeEach(() => {
   stateFixture.mode = 'ready';
   actionMocks.retry.mockClear();
   actionMocks.saveOffline.mockClear();
+  clipboardMock.mockReset();
+  clipboardMock.mockResolvedValue(true);
 });
 
 describe.each([360, 390, 768, 1024])('CP14 rendered support directory at %ipx', (width) => {
@@ -181,7 +202,10 @@ describe.each([360, 390, 768, 1024])('CP14 rendered support directory at %ipx', 
     expect(harness.container.querySelector('[data-testid="support-screen08-mascot-stage"] img')).not.toBeNull();
     expect(harness.container.textContent).toContain('Reviewed references show a dated source check.');
     expect(harness.container.textContent).toContain('No data');
-    expect(harness.container.textContent).toContain('Internet required · Synthetic summary');
+    expect(harness.container.textContent).toContain('Internet required · Opens official source');
+    expect(harness.container.textContent).toContain('Emergency');
+    expect(harness.container.textContent).toContain('Embassy / Consular');
+    expect(harness.container.textContent).toContain('Organizations');
 
     const interactive = harness.container.querySelectorAll<HTMLElement>('[role="button"], [role="link"]');
     for (const control of interactive) {
@@ -191,6 +215,22 @@ describe.each([360, 390, 768, 1024])('CP14 rendered support directory at %ipx', 
     expect(harness.container.scrollWidth).toBeLessThanOrEqual(harness.container.clientWidth || width);
     await cleanup(harness.container, harness.root);
   });
+});
+
+it('keeps copy disclosure honest when Clipboard resolves false or rejects', async () => {
+  const harness = await renderAtWidth(390);
+  const copy = harness.container.querySelector<HTMLElement>('[aria-label="Copy 1288"]');
+  if (!copy) throw new Error('Copy action did not render');
+
+  clipboardMock.mockResolvedValueOnce(false);
+  await act(async () => copy.click());
+  expect(harness.container.textContent).toContain('Could not copy this contact.');
+  expect(harness.container.textContent).not.toContain('1288 copied.');
+
+  clipboardMock.mockRejectedValueOnce(new Error('denied'));
+  await act(async () => copy.click());
+  expect(harness.container.textContent).toContain('Could not copy this contact.');
+  await cleanup(harness.container, harness.root);
 });
 
 it('filters Cambodia and Viet Nam locally without removing explicit status distinctions', async () => {
@@ -209,6 +249,29 @@ it('filters Cambodia and Viet Nam locally without removing explicit status disti
   await cleanup(harness.container, harness.root);
 });
 
+it('country selector activates from Enter and Space with a visible focusable button', async () => {
+  const harness = await renderAtWidth(390);
+  const cambodia = harness.container.querySelector<HTMLElement>('[data-testid="support-country-cambodia"]');
+  const vietnam = harness.container.querySelector<HTMLElement>('[data-testid="support-country-vietnam"]');
+  if (!cambodia || !vietnam) throw new Error('Country controls did not render');
+  const keyboard = userEvent.setup({ document });
+
+  await act(async () => {
+    vietnam.focus();
+    await keyboard.keyboard('{Enter}');
+  });
+  expect(document.activeElement).toBe(vietnam);
+  expect(vietnam.getAttribute('aria-pressed')).toBe('true');
+
+  await act(async () => {
+    cambodia.focus();
+    await keyboard.keyboard(' ');
+  });
+  expect(document.activeElement).toBe(cambodia);
+  expect(cambodia.getAttribute('aria-pressed')).toBe('true');
+  await cleanup(harness.container, harness.root);
+});
+
 it('keeps saved-copy disclosure visible offline and exposes retry and offline-save actions', async () => {
   stateFixture.mode = 'offline';
   const harness = await renderAtWidth(390);
@@ -221,6 +284,16 @@ it('keeps saved-copy disclosure visible offline and exposes retry and offline-sa
   await act(async () => save.click());
   expect(actionMocks.retry).toHaveBeenCalledOnce();
   expect(actionMocks.saveOffline).toHaveBeenCalledOnce();
+  await cleanup(harness.container, harness.root);
+});
+
+it('discloses the bundled review date and need to recheck availability on first-run offline', async () => {
+  stateFixture.mode = 'bundle';
+  const harness = await renderAtWidth(390);
+  expect(harness.container.textContent).toContain('Offline · showing bundled contacts');
+  expect(harness.container.textContent).toContain('Bundled review Aug 12, 2026');
+  expect(harness.container.textContent).toContain('Verify availability again when you have a connection.');
+  expect(harness.container.textContent).toContain('Included with this app');
   await cleanup(harness.container, harness.root);
 });
 

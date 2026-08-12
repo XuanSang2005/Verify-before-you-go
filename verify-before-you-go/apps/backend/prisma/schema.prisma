@@ -102,6 +102,7 @@ enum SupportCountry {
 enum SupportContactKind {
   EMERGENCY
   EMBASSY
+  CONSULAR
   ORGANIZATION
 }
 
@@ -113,6 +114,11 @@ enum SupportAccessMode {
 enum SupportDataStatus {
   REVIEWED_REFERENCE
   SYNTHETIC_SUMMARY
+}
+
+enum SupportLanguageStatus {
+  CONFIRMED
+  UNCONFIRMED
 }
 
 model SupportContact {
@@ -132,6 +138,7 @@ model SupportContact {
   sourceOwner     String
   sourceUrl       String
   languages       String[]
+  languageStatus  SupportLanguageStatus
   hours           String
   lastReviewedAt  DateTime
   nextReviewAt    DateTime

@@ -4,7 +4,7 @@ export const SUPPORT_COUNTRIES = ['cambodia', 'vietnam'] as const;
 export const SupportCountrySchema = z.enum(SUPPORT_COUNTRIES);
 export type SupportCountry = z.infer<typeof SupportCountrySchema>;
 
-export const SUPPORT_CONTACT_KINDS = ['emergency', 'embassy', 'organization'] as const;
+export const SUPPORT_CONTACT_KINDS = ['emergency', 'embassy', 'consular', 'organization'] as const;
 export const SupportContactKindSchema = z.enum(SUPPORT_CONTACT_KINDS);
 export type SupportContactKind = z.infer<typeof SupportContactKindSchema>;
 
@@ -19,6 +19,10 @@ export type SupportDataStatus = z.infer<typeof SupportDataStatusSchema>;
 export const SUPPORT_REVIEW_STATUSES = ['current', 'review-due'] as const;
 export const SupportReviewStatusSchema = z.enum(SUPPORT_REVIEW_STATUSES);
 export type SupportReviewStatus = z.infer<typeof SupportReviewStatusSchema>;
+
+export const SUPPORT_LANGUAGE_STATUSES = ['confirmed', 'unconfirmed'] as const;
+export const SupportLanguageStatusSchema = z.enum(SUPPORT_LANGUAGE_STATUSES);
+export type SupportLanguageStatus = z.infer<typeof SupportLanguageStatusSchema>;
 
 export const SupportContactSchema = z.object({
   id: z.string().regex(/^support-[a-z0-9]+(?:-[a-z0-9]+)*$/),
@@ -36,7 +40,8 @@ export const SupportContactSchema = z.object({
   dataStatusLabel: z.string().min(1).max(80),
   sourceOwner: z.string().min(1).max(120),
   sourceUrl: z.url().startsWith('https://').max(500),
-  languages: z.array(z.string().min(1).max(40)).min(1).max(6),
+  languages: z.array(z.string().min(1).max(40)).max(6),
+  languageStatus: SupportLanguageStatusSchema,
   hours: z.string().min(1).max(120),
   lastReviewedAt: z.iso.datetime(),
   nextReviewAt: z.iso.datetime(),
@@ -59,6 +64,20 @@ export const SupportContactSchema = z.object({
       path: ['actionUri'],
     });
   }
+  if (contact.languageStatus === 'confirmed' && contact.languages.length === 0) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Confirmed language metadata requires at least one language name.',
+      path: ['languages'],
+    });
+  }
+  if (contact.languageStatus === 'unconfirmed' && contact.languages.length > 0) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Unconfirmed language metadata must not imply language availability.',
+      path: ['languages'],
+    });
+  }
 });
 
 export type SupportContact = z.infer<typeof SupportContactSchema>;
@@ -79,3 +98,15 @@ export const SupportDirectoryResponseSchema = z.object({
 }).strict();
 
 export type SupportDirectoryResponse = z.infer<typeof SupportDirectoryResponseSchema>;
+
+export const SUPPORT_BUNDLE_AVAILABILITY_NOTICE =
+  'Bundled contacts were reviewed on the date shown. Verify availability again when you have a connection.' as const;
+
+export const SupportDirectoryBundleSchema = z.object({
+  bundleSchemaVersion: z.literal(1),
+  bundledAt: z.iso.datetime(),
+  availabilityNotice: z.literal(SUPPORT_BUNDLE_AVAILABILITY_NOTICE),
+  response: SupportDirectoryResponseSchema,
+}).strict();
+
+export type SupportDirectoryBundle = z.infer<typeof SupportDirectoryBundleSchema>;

@@ -25,7 +25,8 @@ const response = {
     dataStatusLabel: 'Reviewed emergency reference',
     sourceOwner: 'Telecommunication Regulator of Cambodia',
     sourceUrl: 'https://www.trc.gov.kh/en/resources/emergency-numbers/',
-    languages: ['Confirm with provider'],
+    languages: [],
+    languageStatus: 'unconfirmed',
     hours: 'Availability not independently confirmed',
     lastReviewedAt: '2026-08-12T00:00:00.000Z',
     nextReviewAt: '2026-09-12T00:00:00.000Z',
@@ -61,6 +62,18 @@ test('support API distinguishes network, HTTP and invalid response errors', asyn
   );
   await assert.rejects(
     () => fetchSupportDirectory(undefined, async () => new Response(JSON.stringify({ contacts: 'invalid' }), { status: 200 })),
+    (error) => error instanceof SupportApiError && error.kind === 'invalid-response',
+  );
+  const terminatedResponse = new Response(null, { status: 200 });
+  Object.defineProperty(terminatedResponse, 'json', {
+    value: async () => { throw new TypeError('terminated'); },
+  });
+  await assert.rejects(
+    () => fetchSupportDirectory(undefined, async () => terminatedResponse),
+    (error) => error instanceof SupportApiError && error.kind === 'network',
+  );
+  await assert.rejects(
+    () => fetchSupportDirectory(undefined, async () => new Response('{broken', { status: 200 })),
     (error) => error instanceof SupportApiError && error.kind === 'invalid-response',
   );
 });

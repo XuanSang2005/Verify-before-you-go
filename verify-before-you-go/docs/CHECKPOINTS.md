@@ -15,5 +15,5 @@
 | CP11 | Approved | Idempotent private report submission, encrypted PostgreSQL records, server redaction, bounded recovery delivery and receipt |
 | CP12 | Approved | Signed allowlisted share tokens, privacy-safe preview, native/Web share, copy fallback and tamper-checked recipient view |
 | CP13 | Approved | Private report status recovery, native SecureStore access vault, session-only web keys and Screen 16 My Reports UI |
-| CP14 | Ready for local review | Country-filtered help directory, reviewed emergency references, synthetic organization summaries, source metadata and versioned offline cache |
+| CP14 | Ready for local review | Country-filtered help directory, exact reviewed emergency actions, first-run offline bundle, consular/organization references and coordinated public cache |
 | CP15-CP16 | Not started | Awaiting explicit checkpoint approval |

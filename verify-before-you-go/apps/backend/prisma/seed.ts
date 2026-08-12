@@ -6,6 +6,10 @@ import { PrismaClient } from '../src/generated/prisma/client.js';
 import { seedCommunityAlerts } from '../src/modules/alerts/alerts.seed-data.js';
 import { seedNewsStories } from '../src/modules/news/news.seed-data.js';
 import { seedSupportContacts } from '../src/modules/support/support.seed-data.js';
+import {
+  reconcileSupportDirectorySeed,
+  type SupportSeedPort,
+} from '../src/modules/support/support.seed.js';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error('DATABASE_URL is required to seed the database.');
@@ -60,24 +64,7 @@ for (const alert of seedCommunityAlerts) {
   });
 }
 
-for (const contact of seedSupportContacts) {
-  const country = contact.country === 'cambodia' ? 'CAMBODIA' : 'VIETNAM';
-  const kind = {
-    emergency: 'EMERGENCY',
-    embassy: 'EMBASSY',
-    organization: 'ORGANIZATION',
-  }[contact.kind] as 'EMERGENCY' | 'EMBASSY' | 'ORGANIZATION';
-  const accessMode = contact.accessMode === 'cellular' ? 'CELLULAR' : 'INTERNET';
-  const dataStatus = contact.dataStatus === 'reviewed-reference'
-    ? 'REVIEWED_REFERENCE'
-    : 'SYNTHETIC_SUMMARY';
-
-  await prisma.supportContact.upsert({
-    where: { id: contact.id },
-    update: { ...contact, country, kind, accessMode, dataStatus },
-    create: { ...contact, country, kind, accessMode, dataStatus },
-  });
-}
+await reconcileSupportDirectorySeed(prisma as unknown as SupportSeedPort);
 await prisma.$disconnect();
 console.info(
   `Seeded deterministic CP14 foundation metadata, ${seedNewsStories.length} synthetic news stories, ${seedCommunityAlerts.length} reviewed synthetic alerts and ${seedSupportContacts.length} support-directory entries.`,
