@@ -2,9 +2,9 @@
 
 Local-first Expo and Fastify monorepo for an evidence-first recruitment verification platform.
 
-## Implemented scope: CP01–CP14
+## Implemented scope: CP01–CP15
 
-The approved CP01–CP13 foundation and CP14 ready-for-local-review implementation currently provide:
+The approved CP01–CP15 feature set currently provides:
 
 - Expo Router shell for iOS, Android, and responsive web
 - Fastify API with `GET /api/v1/health`
@@ -27,16 +27,17 @@ The approved CP01–CP13 foundation and CP14 ready-for-local-review implementati
 - PostgreSQL-backed synthetic newsroom at `/news` and `/news/[slug]`
 - Offline five-topic MIL quiz at `/quiz`
 - PostgreSQL-backed reviewed synthetic community alerts at `/alerts` and `/alerts/[id]`
-- Search, location/category filters, masked identifiers, moderation metadata, review dates and independent verification guidance
+- Search and location filters, masked identifiers, moderation metadata, review dates and independent verification guidance
 - Anonymous local report drafting and privacy review at `/reports/new` and `/reports/privacy`
 - Idempotent private report submission to PostgreSQL and a real receipt at `/reports/receipt`
 - Unicode-safe fail-closed backend redaction, AAD-bound encrypted private fields, bounded recovery-key delivery, an atomic native SecureStore vault and one-session web key handling
 - Privacy-safe sharing at `/share/preview` with backend-signed recipient tokens, native/Web share, copy fallback and a tamper-checked no-account recipient view at `/share/recipient`
 - Private report status recovery at `/reports` with a minimal protected lookup API, native SecureStore keys and session-only web keys
 - A Cambodia/Viet Nam help directory at `/help` with dated official-source metadata, a versioned first-run offline bundle, explicit connectivity requirements and a coordinated public cache
-- Explicit inert placeholders only for workflows assigned to CP15 and later
+- An optional, non-gating How It Works guide at `/how-it-works` with honest device-versus-server disclosures
+- Complete implementations for all 19 application screens, with no unfinished route placeholders
 
-The implemented screens use evidence-based language rather than a conclusion. Screenshot text is not extracted, offer content and analysis results remain transient, and public alert fixtures are synthetic, reviewed and privacy-masked. CP11 submits structured report facts; private evidence images remain local until a later secure upload flow. CP12 shares only allowlisted signal categories and fixed safety copy, never the posting, marked evidence, screenshot, identifiers, report data or recovery key. CP13 returns only a minimal workflow status after recovery-key verification. CP14 exposes only reviewed public references, records unknown language/hours honestly, and never auto-contacts a service or shares location. Placeholder routes contain no future business logic.
+The implemented screens use evidence-based language rather than a conclusion. Screenshot text is not extracted, offer content and analysis results remain transient, and public alert fixtures are synthetic, reviewed and privacy-masked. Private report submission sends reviewed structured facts; evidence images remain local. Sharing uses only signed, allowlisted summaries. Report recovery returns only a minimal workflow status. The help directory exposes dated reviewed references and never auto-contacts a service or shares location.
 
 ## Quick start
 

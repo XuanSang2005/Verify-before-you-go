@@ -39,11 +39,11 @@ Set `EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:4000/api/v1`, run `npm run dev:fro
 
 ## Physical device with Expo Go
 
-The computer LAN address detected again on 12 August 2026 is `10.102.13.31`. This address can change whenever the Mac changes Wi-Fi networks or hotspots, so confirm the current address with `ipconfig getifaddr en0` (or `ifconfig en0` when needed), then set:
+The computer LAN address detected again on 12 August 2026 is `192.168.1.12`. This address can change whenever the Mac changes Wi-Fi networks or hotspots, so confirm the current address with `ipconfig getifaddr en0` (or `ifconfig en0` when needed), then set:
 
 ```text
-EXPO_PUBLIC_API_BASE_URL=http://10.102.13.31:4000/api/v1
-CORS_ORIGINS=http://localhost:8081,http://localhost:19006,http://10.102.13.31:8081
+EXPO_PUBLIC_API_BASE_URL=http://192.168.1.12:4000/api/v1
+CORS_ORIGINS=http://localhost:8081,http://localhost:19006,http://192.168.1.12:8081
 ```
 
 Set `EXPO_PUBLIC_API_BASE_URL` in `apps/frontend/.env` and add the LAN web origin `http://<LAN-IP>:8081` to the comma-separated `CORS_ORIGINS` value in `apps/backend/.env`. Restart both processes after either value changes. Without the LAN origin, native Expo Go requests can work while Safari opened at the LAN URL is still blocked by CORS.
@@ -130,3 +130,38 @@ The production frontend includes a versioned, strict-contract support pack, so a
 Successful API loads and explicit “Save offline” actions share one module-level, serialized cache coordinator. Superseded requests cannot publish state or cross the cache mutation boundary; network fallback re-reads the latest authoritative cache immediately before display. A response-body transport interruption uses the saved copy or bundle, while parsed data that fails the strict schema still fails closed. The cache contains no report, recruitment posting, evidence, screenshot, identifier, recovery key, account or device location.
 
 Emergency, embassy/consular and organization cards show dated reviewed-reference metadata but do not guarantee availability. On web, calls and online actions are real `tel:`/`https:` anchors; on native they open only after the user activates the disclosed cellular/internet action. The app never monitors emergencies, automatically calls a service, or shares location.
+
+## CP15 How It Works
+
+Open `/how-it-works` for the optional evidence-first guide. It is never an onboarding gate and does not change the launch route: `/` remains the Homepage with Home selected. The guide explains transient checker analysis, why there is no scam score, what report data is deliberately sent to the backend, what remains on the device, recovery-key handling on native and web, and independent verification.
+
+## CP16 local release check
+
+Use the Node version in `.nvmrc` (Node 24) for the release check. From the repository root, start PostgreSQL without deleting its volume, apply migrations and seed deterministic public fixtures:
+
+```bash
+docker compose up -d
+npm run db:generate
+npm run db:migrate
+npm run db:seed
+```
+
+Then run the release validation once:
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run export:web
+npm run db:validate
+npm run build --workspace @vbyg/backend
+npx expo-doctor@latest apps/frontend
+```
+
+The static web export is written to `apps/frontend/dist`. Preview it locally without deploying:
+
+```bash
+python3 -m http.server 8082 --directory apps/frontend/dist
+```
+
+Internal navigation and direct refresh are supported for all canonical routes. Known static parameters are generated for newsroom stories, reviewed alert IDs and analysis finding IDs. Transient checker results, private report drafts and one-time receipt state intentionally require their originating session and show an honest recovery state after a direct refresh.
