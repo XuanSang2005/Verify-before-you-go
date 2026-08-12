@@ -9,6 +9,7 @@ import {
   loadCachedSupportDirectory,
   saveCachedSupportDirectory,
   stageCachedSupportDirectory,
+  SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX,
   SUPPORT_DIRECTORY_CACHE_HEAD_KEY,
   SUPPORT_DIRECTORY_CACHE_KEY,
   SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX,
@@ -40,6 +41,12 @@ function createStorage(): SupportCacheStoragePort & { values: Map<string, string
 
 function snapshotKeys(storage: ReturnType<typeof createStorage>) {
   return [...storage.values.keys()].filter((key) => key.startsWith(SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX));
+}
+
+function conflictMarkerKeys(storage: ReturnType<typeof createStorage>) {
+  return [...storage.values.keys()].filter((key) => (
+    key.startsWith(SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX)
+  ));
 }
 
 test('immutable snapshots choose the newest response revision without an authoritative head', async () => {
@@ -124,6 +131,154 @@ test('equal revisions with different strict payloads fail closed instead of choo
   assert.equal(await loadCachedSupportDirectory(storage), null);
 });
 
+test('durable normalized conflict marker survives partial cleanup, restart and legacy fallback', async () => {
+  const storage = createStorage();
+  const revisionWithoutMilliseconds: SupportDirectoryResponse = {
+    ...directory,
+    fetchedAt: '2026-08-13T00:00:00Z',
+  };
+  const sameInstantDifferentPayload: SupportDirectoryResponse = {
+    ...directory,
+    contacts: [bundledSupportDirectory.response.contacts[0]!],
+    fetchedAt: '2026-08-13T00:00:00.000Z',
+  };
+  await stageCachedSupportDirectory(
+    revisionWithoutMilliseconds,
+    storage,
+    undefined,
+    'conflict-a',
+  );
+  const baseRemove = storage.removeItem;
+  let removedA = false;
+  storage.removeItem = async (key) => {
+    if (key.endsWith('conflict-a')) {
+      removedA = true;
+      await baseRemove(key);
+      return;
+    }
+    if (key.endsWith('conflict-b')) throw new Error('partial cleanup failure');
+    await baseRemove(key);
+  };
+  await stageCachedSupportDirectory(
+    sameInstantDifferentPayload,
+    storage,
+    undefined,
+    'conflict-b',
+  );
+
+  assert.equal(removedA, true);
+  assert.equal(snapshotKeys(storage).some((key) => key.endsWith('conflict-b')), true);
+  assert.equal(conflictMarkerKeys(storage).length, 1);
+  assert.match(
+    storage.values.get(conflictMarkerKeys(storage)[0]!) ?? '',
+    /2026-08-13T00:00:00\.000Z/,
+  );
+  assert.equal(await loadCachedSupportDirectory(storage), null);
+
+  const restarted: SupportCacheStoragePort = {
+    getAllKeys: storage.getAllKeys,
+    getItem: storage.getItem,
+    removeItem: storage.removeItem,
+    setItem: storage.setItem,
+  };
+  assert.equal(await loadCachedSupportDirectory(restarted), null);
+  assert.equal(await loadCachedSupportDirectory(restarted), null);
+
+  const v2CandidateId = 'rejected-v2';
+  const v2CandidateKey = `@vbyg/support-directory/v2/slot/${v2CandidateId}`;
+  storage.values.set(v2CandidateKey, JSON.stringify({
+    cacheSchemaVersion: 2,
+    candidateId: v2CandidateId,
+    cachedAt: '2026-08-13T00:10:00.000Z',
+    responseRevision: '2026-08-13T00:00:00Z',
+    data: revisionWithoutMilliseconds,
+  }));
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_HEAD_KEY, JSON.stringify({
+    cacheSchemaVersion: 2,
+    candidateId: v2CandidateId,
+    candidateKey: v2CandidateKey,
+    committedAt: '2026-08-13T00:10:00.000Z',
+    responseRevision: '2026-08-13T00:00:00.000Z',
+  }));
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-13T00:10:00.000Z',
+    data: sameInstantDifferentPayload,
+  }));
+  assert.equal(await loadCachedSupportDirectory(restarted), null);
+
+  const newerByOneMillisecond: SupportDirectoryResponse = {
+    ...directory,
+    fetchedAt: '2026-08-13T00:00:00.001Z',
+  };
+  await saveCachedSupportDirectory(newerByOneMillisecond, storage);
+  assert.equal(
+    (await loadCachedSupportDirectory(restarted))?.data.fetchedAt,
+    '2026-08-13T00:00:00.001Z',
+  );
+});
+
+test('failed conflict-marker write retains both snapshots as durable conflict evidence', async () => {
+  const storage = createStorage();
+  const baseSet = storage.setItem;
+  storage.setItem = async (key, value) => {
+    if (key.startsWith(SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX)) {
+      throw new Error('marker write failed');
+    }
+    await baseSet(key, value);
+  };
+  await stageCachedSupportDirectory(directory, storage, undefined, 'evidence-a');
+  await stageCachedSupportDirectory({
+    ...directory,
+    contacts: [bundledSupportDirectory.response.contacts[0]!],
+  }, storage, undefined, 'evidence-b');
+
+  assert.equal(conflictMarkerKeys(storage).length, 0);
+  assert.equal(snapshotKeys(storage).length, 2);
+  assert.equal(await loadCachedSupportDirectory(storage), null);
+  assert.equal(snapshotKeys(storage).length, 2);
+});
+
+test('conflict markers remain bounded through a durable rejection horizon', async () => {
+  const storage = createStorage();
+  const firstRevision = '2026-07-01T00:00:00.000Z';
+  for (let index = 0; index < 20; index += 1) {
+    const fetchedAt = new Date(Date.UTC(2026, 6, index + 1)).toISOString();
+    await stageCachedSupportDirectory({ ...directory, fetchedAt }, storage, undefined, `marker-${index}-a`);
+    await stageCachedSupportDirectory({
+      ...directory,
+      contacts: [bundledSupportDirectory.response.contacts[0]!],
+      fetchedAt,
+    }, storage, undefined, `marker-${index}-b`);
+  }
+  assert.ok(conflictMarkerKeys(storage).length <= 16);
+  assert.ok(storage.values.has('@vbyg/support-directory/v3/conflict-horizon'));
+
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-13T00:10:00.000Z',
+    data: { ...directory, fetchedAt: firstRevision },
+  }));
+  assert.equal(await loadCachedSupportDirectory(storage), null);
+});
+
+test('chronological selection uses epoch milliseconds instead of raw timestamp spelling', async () => {
+  const storage = createStorage();
+  await saveCachedSupportDirectory({
+    ...directory,
+    fetchedAt: '2026-08-13T00:00:00.001Z',
+  }, storage);
+  await saveCachedSupportDirectory({
+    ...directory,
+    fetchedAt: '2026-08-13T00:00:00Z',
+  }, storage);
+
+  assert.equal(
+    (await loadCachedSupportDirectory(storage))?.data.fetchedAt,
+    '2026-08-13T00:00:00.001Z',
+  );
+});
+
 test('legacy v1 remains readable and is migrated without deleting the legacy copy', async () => {
   const storage = createStorage();
   await saveCachedSupportDirectory(directory, storage, '2026-08-12T00:30:00.000Z');
@@ -166,6 +321,38 @@ test('valid v2 head is safely migrated while a corrupt head falls back to v1', a
     data: directory,
   }));
   assert.equal((await loadCachedSupportDirectory(fallbackStorage))?.data.fetchedAt, directory.fetchedAt);
+});
+
+test('v3 enumeration failure still returns the newest directly readable legacy cache', async () => {
+  const storage = createStorage();
+  const candidateId = 'enumeration-v2';
+  const candidateKey = `@vbyg/support-directory/v2/slot/${candidateId}`;
+  storage.values.set(candidateKey, JSON.stringify({
+    cacheSchemaVersion: 2,
+    candidateId,
+    cachedAt: '2026-08-13T01:00:00.000Z',
+    responseRevision: newerDirectory.fetchedAt,
+    data: newerDirectory,
+  }));
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_HEAD_KEY, JSON.stringify({
+    cacheSchemaVersion: 2,
+    candidateId,
+    candidateKey,
+    committedAt: '2026-08-13T01:00:00.000Z',
+    responseRevision: newerDirectory.fetchedAt,
+  }));
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-12T01:00:00.000Z',
+    data: directory,
+  }));
+  storage.getAllKeys = async () => { throw new Error('enumeration unavailable'); };
+
+  assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
+
+  const empty = createStorage();
+  empty.getAllKeys = async () => { throw new Error('enumeration unavailable'); };
+  await assert.rejects(() => loadCachedSupportDirectory(empty), /enumeration unavailable/);
 });
 
 test('storage failures remain observable while cleanup failures do not fail saves', async () => {

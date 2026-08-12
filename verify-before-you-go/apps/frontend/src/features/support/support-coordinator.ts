@@ -1,6 +1,9 @@
 import type { SupportDirectoryResponse } from '@vbyg/contracts';
 
-import type { StagedSupportDirectoryCache } from './support-cache';
+import {
+  normalizeSupportCacheRevision,
+  type StagedSupportDirectoryCache,
+} from './support-cache';
 
 export type SupportRequestAuthority = number;
 
@@ -63,9 +66,11 @@ export class SupportDirectoryCoordinator {
     stage: CacheStager,
     commit: CacheCommitter,
   ): Promise<boolean> {
+    const normalizedResponseRevision = normalizeSupportCacheRevision(responseRevision);
     if (
       !this.isRequestAuthoritative(authority)
-      || data.fetchedAt !== responseRevision
+      || !normalizedResponseRevision
+      || normalizeSupportCacheRevision(data.fetchedAt) !== normalizedResponseRevision
     ) return false;
     const mutation = this.claimMutation();
     const candidate = await stage(data);
@@ -73,7 +78,7 @@ export class SupportDirectoryCoordinator {
       if (
         !this.isRequestAuthoritative(authority)
         || mutation !== this.mutationGeneration
-        || candidate.responseRevision !== responseRevision
+        || candidate.responseRevision !== normalizedResponseRevision
       ) return false;
       return commit(
         candidate,

@@ -7,8 +7,11 @@ import {
 export const SUPPORT_DIRECTORY_CACHE_KEY = '@vbyg/support-directory/v1';
 export const SUPPORT_DIRECTORY_CACHE_HEAD_KEY = '@vbyg/support-directory/v2/head';
 export const SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX = '@vbyg/support-directory/v3/snapshot/';
+export const SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX = '@vbyg/support-directory/v3/conflict/';
 
+const SUPPORT_DIRECTORY_CACHE_CONFLICT_HORIZON_KEY = '@vbyg/support-directory/v3/conflict-horizon';
 const SUPPORT_DIRECTORY_CACHE_V2_SLOT_PREFIX = '@vbyg/support-directory/v2/slot/';
+const MAX_RETAINED_CONFLICT_MARKERS = 16;
 const MAX_RETAINED_SNAPSHOTS = 3;
 
 export interface SupportCacheStoragePort {
@@ -31,6 +34,11 @@ export type StagedSupportDirectoryCache = {
   cachedAt: string;
   payloadCanonical: string;
   responseRevision: string;
+};
+
+type NormalizedRevision = {
+  epochMs: number;
+  iso: string;
 };
 
 type SupportCacheV2Head = {
@@ -57,16 +65,50 @@ type SupportCacheSnapshot = {
   data: SupportDirectoryResponse;
 };
 
+type SupportCacheConflictMarker = {
+  cacheSchemaVersion: 3;
+  kind: 'revision-conflict';
+  revision: string;
+  revisionEpochMs: number;
+};
+
+type SupportCacheConflictHorizon = {
+  cacheSchemaVersion: 3;
+  kind: 'revision-conflict-horizon';
+  rejectAtOrBefore: string;
+  rejectAtOrBeforeEpochMs: number;
+};
+
 type ParsedSnapshot = {
   cache: CachedSupportDirectory;
   content: string;
   key: string;
+  responseEpochMs: number;
   responseRevision: string;
+};
+
+type SnapshotConflict = {
+  keys: string[];
+  revision: NormalizedRevision;
+};
+
+type SnapshotAnalysis = {
+  accepted: ParsedSnapshot[];
+  conflicts: SnapshotConflict[];
+  cleanupKeys: string[];
+};
+
+type ConflictState = {
+  horizonEpochMs?: number;
+  markers: Map<number, string>;
+  runtimeRejected: Set<number>;
 };
 
 type CacheCandidate = {
   cache: CachedSupportDirectory;
   content: string;
+  responseEpochMs: number;
+  responseRevision: string;
   source: 'v1' | 'v2' | 'v3';
 };
 
@@ -84,18 +126,54 @@ function createCandidateId() {
   return `${Date.now().toString(36)}-${candidateSequence.toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
-function parseCachedDirectory(raw: string | null): CachedSupportDirectory | null {
+export function normalizeSupportCacheRevision(value: string): string | null {
+  const epochMs = new Date(value).getTime();
+  return Number.isFinite(epochMs) ? new Date(epochMs).toISOString() : null;
+}
+
+function normalizeRevision(value: string): NormalizedRevision | null {
+  const iso = normalizeSupportCacheRevision(value);
+  if (!iso) return null;
+  return { epochMs: new Date(iso).getTime(), iso };
+}
+
+function normalizeResponse(data: SupportDirectoryResponse) {
+  const revision = normalizeRevision(data.fetchedAt);
+  if (!revision) return null;
+  const normalized: SupportDirectoryResponse = { ...data, fetchedAt: revision.iso };
+  return { content: JSON.stringify(normalized), data: normalized, revision };
+}
+
+function hasExactKeys(value: object, expected: readonly string[]) {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === [...expected].sort()[index]);
+}
+
+function conflictMarkerKey(epochMs: number) {
+  return `${SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX}${epochMs}`;
+}
+
+function parseCachedDirectory(raw: string | null): CacheCandidate | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Record<string, unknown>;
     if (value.schemaVersion !== 1 || typeof value.cachedAt !== 'string') return null;
-    const cachedAt = new Date(value.cachedAt);
+    const cachedAt = normalizeRevision(value.cachedAt);
     const parsed = SupportDirectoryResponseSchema.safeParse(value.data);
-    if (Number.isNaN(cachedAt.getTime()) || !parsed.success) return null;
+    if (!cachedAt || !parsed.success) return null;
+    const normalized = normalizeResponse(parsed.data);
+    if (!normalized) return null;
     return {
-      schemaVersion: 1,
-      cachedAt: cachedAt.toISOString(),
-      data: parsed.data,
+      cache: {
+        schemaVersion: 1,
+        cachedAt: cachedAt.iso,
+        data: normalized.data,
+      },
+      content: normalized.content,
+      responseEpochMs: normalized.revision.epochMs,
+      responseRevision: normalized.revision.iso,
+      source: 'v1',
     };
   } catch {
     return null;
@@ -113,8 +191,8 @@ function parseV2Head(raw: string | null): SupportCacheV2Head | null {
       || typeof value.committedAt !== 'string'
       || typeof value.responseRevision !== 'string'
       || value.candidateKey !== `${SUPPORT_DIRECTORY_CACHE_V2_SLOT_PREFIX}${value.candidateId}`
-      || Number.isNaN(new Date(value.committedAt).getTime())
-      || Number.isNaN(new Date(value.responseRevision).getTime())
+      || !normalizeRevision(value.committedAt)
+      || !normalizeRevision(value.responseRevision)
     ) return null;
     return value as SupportCacheV2Head;
   } catch {
@@ -122,25 +200,37 @@ function parseV2Head(raw: string | null): SupportCacheV2Head | null {
   }
 }
 
-function parseV2Slot(raw: string | null, head: SupportCacheV2Head): CachedSupportDirectory | null {
+function parseV2Slot(raw: string | null, head: SupportCacheV2Head): CacheCandidate | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Partial<SupportCacheV2Slot>;
-    const cachedAt = typeof value.cachedAt === 'string' ? new Date(value.cachedAt) : null;
+    const cachedAt = typeof value.cachedAt === 'string' ? normalizeRevision(value.cachedAt) : null;
+    const slotRevision = typeof value.responseRevision === 'string'
+      ? normalizeRevision(value.responseRevision)
+      : null;
+    const headRevision = normalizeRevision(head.responseRevision);
     const parsed = SupportDirectoryResponseSchema.safeParse(value.data);
     if (
       value.cacheSchemaVersion !== 2
       || value.candidateId !== head.candidateId
-      || value.responseRevision !== head.responseRevision
-      || !parsed.success
-      || parsed.data.fetchedAt !== head.responseRevision
       || !cachedAt
-      || Number.isNaN(cachedAt.getTime())
+      || !slotRevision
+      || !headRevision
+      || slotRevision.epochMs !== headRevision.epochMs
+      || !parsed.success
     ) return null;
+    const normalized = normalizeResponse(parsed.data);
+    if (!normalized || normalized.revision.epochMs !== headRevision.epochMs) return null;
     return {
-      schemaVersion: 1,
-      cachedAt: cachedAt.toISOString(),
-      data: parsed.data,
+      cache: {
+        schemaVersion: 1,
+        cachedAt: cachedAt.iso,
+        data: normalized.data,
+      },
+      content: normalized.content,
+      responseEpochMs: normalized.revision.epochMs,
+      responseRevision: normalized.revision.iso,
+      source: 'v2',
     };
   } catch {
     return null;
@@ -152,106 +242,104 @@ function parseSnapshot(key: string, raw: string | null): ParsedSnapshot | null {
   try {
     const value = JSON.parse(raw) as Partial<SupportCacheSnapshot>;
     const snapshotId = key.slice(SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX.length);
-    const cachedAt = typeof value.cachedAt === 'string' ? new Date(value.cachedAt) : null;
+    const cachedAt = typeof value.cachedAt === 'string' ? normalizeRevision(value.cachedAt) : null;
+    const storedRevision = typeof value.responseRevision === 'string'
+      ? normalizeRevision(value.responseRevision)
+      : null;
     const parsed = SupportDirectoryResponseSchema.safeParse(value.data);
-    if (!parsed.success) return null;
     if (
       value.cacheSchemaVersion !== 3
       || value.snapshotId !== snapshotId
-      || value.responseRevision !== parsed.data.fetchedAt
       || !cachedAt
-      || Number.isNaN(cachedAt.getTime())
+      || !storedRevision
+      || !parsed.success
     ) return null;
+    const normalized = normalizeResponse(parsed.data);
+    if (!normalized || normalized.revision.epochMs !== storedRevision.epochMs) return null;
     return {
       cache: {
         schemaVersion: 1,
-        cachedAt: cachedAt.toISOString(),
-        data: parsed.data,
+        cachedAt: cachedAt.iso,
+        data: normalized.data,
       },
-      content: JSON.stringify(parsed.data),
+      content: normalized.content,
       key,
-      responseRevision: parsed.data.fetchedAt,
+      responseEpochMs: normalized.revision.epochMs,
+      responseRevision: normalized.revision.iso,
     };
   } catch {
     return null;
   }
 }
 
-function selectSnapshots(snapshots: readonly ParsedSnapshot[]) {
-  const byRevision = new Map<string, ParsedSnapshot[]>();
+function parseConflictMarker(key: string, raw: string | null): SupportCacheConflictMarker | null {
+  if (!raw || !key.startsWith(SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX)) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<SupportCacheConflictMarker>;
+    const revision = typeof value.revision === 'string' ? normalizeRevision(value.revision) : null;
+    if (
+      !hasExactKeys(value, ['cacheSchemaVersion', 'kind', 'revision', 'revisionEpochMs'])
+      || value.cacheSchemaVersion !== 3
+      || value.kind !== 'revision-conflict'
+      || !revision
+      || value.revision !== revision.iso
+      || value.revisionEpochMs !== revision.epochMs
+      || key !== conflictMarkerKey(revision.epochMs)
+    ) return null;
+    return value as SupportCacheConflictMarker;
+  } catch {
+    return null;
+  }
+}
+
+function parseConflictHorizon(raw: string | null): SupportCacheConflictHorizon | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<SupportCacheConflictHorizon>;
+    const revision = typeof value.rejectAtOrBefore === 'string'
+      ? normalizeRevision(value.rejectAtOrBefore)
+      : null;
+    if (
+      !hasExactKeys(value, ['cacheSchemaVersion', 'kind', 'rejectAtOrBefore', 'rejectAtOrBeforeEpochMs'])
+      || value.cacheSchemaVersion !== 3
+      || value.kind !== 'revision-conflict-horizon'
+      || !revision
+      || value.rejectAtOrBefore !== revision.iso
+      || value.rejectAtOrBeforeEpochMs !== revision.epochMs
+    ) return null;
+    return value as SupportCacheConflictHorizon;
+  } catch {
+    return null;
+  }
+}
+
+function analyzeSnapshots(snapshots: readonly ParsedSnapshot[]): SnapshotAnalysis {
+  const byRevision = new Map<number, ParsedSnapshot[]>();
   for (const snapshot of snapshots) {
-    const group = byRevision.get(snapshot.responseRevision) ?? [];
+    const group = byRevision.get(snapshot.responseEpochMs) ?? [];
     group.push(snapshot);
-    byRevision.set(snapshot.responseRevision, group);
+    byRevision.set(snapshot.responseEpochMs, group);
   }
 
   const accepted: ParsedSnapshot[] = [];
-  const obsoleteKeys: string[] = [];
-  const rejectedRevisions = new Set<string>();
-  const revisions = [...byRevision.keys()].sort((left, right) => right.localeCompare(left));
-  for (const revision of revisions) {
-    const group = byRevision.get(revision) ?? [];
-    const contents = new Set(group.map((snapshot) => snapshot.content));
-    if (contents.size !== 1) {
-      // Same server revision with different strict payloads is ambiguous. Reject
-      // the whole revision instead of letting completion order choose a winner.
-      obsoleteKeys.push(...group.map((snapshot) => snapshot.key));
-      rejectedRevisions.add(revision);
+  const cleanupKeys: string[] = [];
+  const conflicts: SnapshotConflict[] = [];
+  const epochs = [...byRevision.keys()].sort((left, right) => right - left);
+  for (const epochMs of epochs) {
+    const group = byRevision.get(epochMs) ?? [];
+    if (new Set(group.map((snapshot) => snapshot.content)).size !== 1) {
+      conflicts.push({
+        keys: group.map((snapshot) => snapshot.key),
+        revision: { epochMs, iso: new Date(epochMs).toISOString() },
+      });
       continue;
     }
     group.sort((left, right) => left.key.localeCompare(right.key));
     const [selected, ...duplicates] = group;
     if (selected) accepted.push(selected);
-    obsoleteKeys.push(...duplicates.map((snapshot) => snapshot.key));
+    cleanupKeys.push(...duplicates.map((snapshot) => snapshot.key));
   }
-
-  const retained = accepted.slice(0, MAX_RETAINED_SNAPSHOTS);
-  obsoleteKeys.push(...accepted.slice(MAX_RETAINED_SNAPSHOTS).map((snapshot) => snapshot.key));
-  return { obsoleteKeys, rejectedRevisions, retained };
-}
-
-async function readSnapshots(storage: SupportCacheStoragePort) {
-  const keys = (await storage.getAllKeys())
-    .filter((key) => key.startsWith(SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX));
-  const snapshots: ParsedSnapshot[] = [];
-  const invalidKeys: string[] = [];
-  for (const key of keys) {
-    try {
-      const raw = await storage.getItem(key);
-      const parsed = parseSnapshot(key, raw);
-      if (parsed) snapshots.push(parsed);
-      else if (raw !== null) invalidKeys.push(key);
-    } catch {
-      // One partial/unreadable slot must not hide another valid offline snapshot.
-    }
-  }
-  const selection = selectSnapshots(snapshots);
-  selection.obsoleteKeys.push(...invalidKeys);
-  return selection;
-}
-
-function selectCacheCandidate(
-  candidates: readonly CacheCandidate[],
-  rejectedRevisions: ReadonlySet<string>,
-): CacheCandidate | null {
-  const byRevision = new Map<string, CacheCandidate[]>();
-  for (const candidate of candidates) {
-    const revision = candidate.cache.data.fetchedAt;
-    if (rejectedRevisions.has(revision)) continue;
-    const group = byRevision.get(revision) ?? [];
-    group.push(candidate);
-    byRevision.set(revision, group);
-  }
-
-  const revisions = [...byRevision.keys()].sort((left, right) => right.localeCompare(left));
-  for (const revision of revisions) {
-    const group = byRevision.get(revision) ?? [];
-    if (new Set(group.map((candidate) => candidate.content)).size !== 1) continue;
-    const sourceRank = { v1: 1, v2: 2, v3: 3 } as const;
-    group.sort((left, right) => sourceRank[right.source] - sourceRank[left.source]);
-    if (group[0]) return group[0];
-  }
-  return null;
+  return { accepted, cleanupKeys, conflicts };
 }
 
 async function bestEffortRemove(storage: SupportCacheStoragePort, keys: readonly string[]) {
@@ -262,6 +350,221 @@ async function bestEffortRemove(storage: SupportCacheStoragePort, keys: readonly
       // Cleanup never owns cache correctness and must not break loading/saving.
     }
   }));
+}
+
+function isRejected(state: ConflictState, epochMs: number) {
+  return state.runtimeRejected.has(epochMs)
+    || state.markers.has(epochMs)
+    || (state.horizonEpochMs !== undefined && epochMs <= state.horizonEpochMs);
+}
+
+async function readConflictState(
+  storage: SupportCacheStoragePort,
+  enumeratedKeys: readonly string[] = [],
+): Promise<ConflictState> {
+  const state: ConflictState = { markers: new Map(), runtimeRejected: new Set() };
+  try {
+    const horizon = parseConflictHorizon(
+      await storage.getItem(SUPPORT_DIRECTORY_CACHE_CONFLICT_HORIZON_KEY),
+    );
+    if (horizon) state.horizonEpochMs = horizon.rejectAtOrBeforeEpochMs;
+  } catch {
+    // Exact markers and retained conflict evidence still fail closed.
+  }
+  for (const key of enumeratedKeys.filter((item) => item.startsWith(SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX))) {
+    try {
+      const marker = parseConflictMarker(key, await storage.getItem(key));
+      if (marker) state.markers.set(marker.revisionEpochMs, key);
+    } catch {
+      // One unreadable marker must not hide another durable rejection.
+    }
+  }
+  return state;
+}
+
+async function persistConflictMarker(
+  storage: SupportCacheStoragePort,
+  state: ConflictState,
+  revision: NormalizedRevision,
+) {
+  state.runtimeRejected.add(revision.epochMs);
+  if (isRejected({ ...state, runtimeRejected: new Set() }, revision.epochMs)) return true;
+  const key = conflictMarkerKey(revision.epochMs);
+  const marker: SupportCacheConflictMarker = {
+    cacheSchemaVersion: 3,
+    kind: 'revision-conflict',
+    revision: revision.iso,
+    revisionEpochMs: revision.epochMs,
+  };
+  try {
+    await storage.setItem(key, JSON.stringify(marker));
+    const persisted = parseConflictMarker(key, await storage.getItem(key));
+    if (!persisted) return false;
+    state.markers.set(revision.epochMs, key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function compactConflictMarkers(storage: SupportCacheStoragePort, state: ConflictState) {
+  const markers = [...state.markers.entries()].sort(([left], [right]) => right - left);
+  const redundant = markers.filter(([epochMs]) => (
+    state.horizonEpochMs !== undefined && epochMs <= state.horizonEpochMs
+  ));
+  const active = markers.filter(([epochMs]) => (
+    state.horizonEpochMs === undefined || epochMs > state.horizonEpochMs
+  ));
+  const evicted = active.slice(MAX_RETAINED_CONFLICT_MARKERS);
+  if (evicted.length === 0) {
+    await bestEffortRemove(storage, redundant.map(([, key]) => key));
+    return;
+  }
+
+  const evictedHorizon = Math.max(...evicted.map(([epochMs]) => epochMs));
+  const horizonEpochMs = Math.max(state.horizonEpochMs ?? Number.NEGATIVE_INFINITY, evictedHorizon);
+  const horizon: SupportCacheConflictHorizon = {
+    cacheSchemaVersion: 3,
+    kind: 'revision-conflict-horizon',
+    rejectAtOrBefore: new Date(horizonEpochMs).toISOString(),
+    rejectAtOrBeforeEpochMs: horizonEpochMs,
+  };
+  try {
+    await storage.setItem(SUPPORT_DIRECTORY_CACHE_CONFLICT_HORIZON_KEY, JSON.stringify(horizon));
+    const persisted = parseConflictHorizon(
+      await storage.getItem(SUPPORT_DIRECTORY_CACHE_CONFLICT_HORIZON_KEY),
+    );
+    if (!persisted || persisted.rejectAtOrBeforeEpochMs < horizonEpochMs) return;
+    state.horizonEpochMs = persisted.rejectAtOrBeforeEpochMs;
+    await bestEffortRemove(storage, [
+      ...redundant.map(([, key]) => key),
+      ...evicted.map(([, key]) => key),
+    ]);
+  } catch {
+    // Never delete exact markers unless the bounded horizon is durable.
+  }
+}
+
+async function prepareV3(
+  storage: SupportCacheStoragePort,
+  keys: readonly string[],
+) {
+  const snapshots: ParsedSnapshot[] = [];
+  const invalidKeys: string[] = [];
+  for (const key of keys.filter((item) => item.startsWith(SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX))) {
+    try {
+      const raw = await storage.getItem(key);
+      const parsed = parseSnapshot(key, raw);
+      if (parsed) snapshots.push(parsed);
+      else if (raw !== null) invalidKeys.push(key);
+    } catch {
+      // One partial/unreadable slot must not hide another valid offline snapshot.
+    }
+  }
+
+  const analysis = analyzeSnapshots(snapshots);
+  const conflictState = await readConflictState(storage, keys);
+  const cleanupKeys = [...invalidKeys, ...analysis.cleanupKeys];
+  for (const conflict of analysis.conflicts) {
+    const durable = await persistConflictMarker(storage, conflictState, conflict.revision);
+    if (durable) cleanupKeys.push(...conflict.keys);
+  }
+
+  const accepted = analysis.accepted.filter((snapshot) => {
+    if (isRejected(conflictState, snapshot.responseEpochMs)) {
+      cleanupKeys.push(snapshot.key);
+      return false;
+    }
+    return true;
+  });
+  accepted.sort((left, right) => right.responseEpochMs - left.responseEpochMs);
+  const retained = accepted.slice(0, MAX_RETAINED_SNAPSHOTS);
+  cleanupKeys.push(...accepted.slice(MAX_RETAINED_SNAPSHOTS).map((snapshot) => snapshot.key));
+  await compactConflictMarkers(storage, conflictState);
+  await bestEffortRemove(storage, cleanupKeys);
+  return { conflictState, retained };
+}
+
+async function readLegacyCandidates(storage: SupportCacheStoragePort) {
+  const candidates: CacheCandidate[] = [];
+  try {
+    const v2Head = parseV2Head(await storage.getItem(SUPPORT_DIRECTORY_CACHE_HEAD_KEY));
+    if (v2Head) {
+      const v2 = parseV2Slot(await storage.getItem(v2Head.candidateKey), v2Head);
+      if (v2) candidates.push(v2);
+    }
+  } catch {
+    // Continue to the independently addressable v1 cache.
+  }
+  try {
+    const v1 = parseCachedDirectory(await storage.getItem(SUPPORT_DIRECTORY_CACHE_KEY));
+    if (v1) candidates.push(v1);
+  } catch {
+    // The caller will use another valid candidate or preserve the storage error.
+  }
+  return candidates;
+}
+
+async function refreshDirectConflictEvidence(
+  storage: SupportCacheStoragePort,
+  state: ConflictState,
+  candidates: readonly CacheCandidate[],
+) {
+  for (const candidate of candidates) {
+    if (isRejected(state, candidate.responseEpochMs)) continue;
+    const key = conflictMarkerKey(candidate.responseEpochMs);
+    try {
+      const marker = parseConflictMarker(key, await storage.getItem(key));
+      if (marker) state.markers.set(marker.revisionEpochMs, key);
+    } catch {
+      // A readable candidate remains available when marker storage is unavailable.
+    }
+  }
+}
+
+async function persistCandidateConflicts(
+  storage: SupportCacheStoragePort,
+  state: ConflictState,
+  candidates: readonly CacheCandidate[],
+) {
+  const byRevision = new Map<number, CacheCandidate[]>();
+  for (const candidate of candidates) {
+    const group = byRevision.get(candidate.responseEpochMs) ?? [];
+    group.push(candidate);
+    byRevision.set(candidate.responseEpochMs, group);
+  }
+  for (const [epochMs, group] of byRevision) {
+    if (new Set(group.map((candidate) => candidate.content)).size > 1) {
+      await persistConflictMarker(storage, state, {
+        epochMs,
+        iso: new Date(epochMs).toISOString(),
+      });
+    }
+  }
+  await compactConflictMarkers(storage, state);
+}
+
+function selectCacheCandidate(
+  candidates: readonly CacheCandidate[],
+  conflictState: ConflictState,
+): CacheCandidate | null {
+  const byRevision = new Map<number, CacheCandidate[]>();
+  for (const candidate of candidates) {
+    if (isRejected(conflictState, candidate.responseEpochMs)) continue;
+    const group = byRevision.get(candidate.responseEpochMs) ?? [];
+    group.push(candidate);
+    byRevision.set(candidate.responseEpochMs, group);
+  }
+
+  const epochs = [...byRevision.keys()].sort((left, right) => right - left);
+  for (const epochMs of epochs) {
+    const group = byRevision.get(epochMs) ?? [];
+    if (new Set(group.map((candidate) => candidate.content)).size !== 1) continue;
+    const sourceRank = { v1: 1, v2: 2, v3: 3 } as const;
+    group.sort((left, right) => sourceRank[right.source] - sourceRank[left.source]);
+    if (group[0]) return group[0];
+  }
+  return null;
 }
 
 async function bestEffortMigrate(
@@ -278,40 +581,32 @@ async function bestEffortMigrate(
 export async function loadCachedSupportDirectory(
   storage: SupportCacheStoragePort = asyncStoragePort,
 ): Promise<CachedSupportDirectory | null> {
-  const snapshots = await readSnapshots(storage);
-  await bestEffortRemove(storage, snapshots.obsoleteKeys);
-  const candidates: CacheCandidate[] = snapshots.retained.map((snapshot) => ({
-    cache: snapshot.cache,
-    content: snapshot.content,
-    source: 'v3',
-  }));
-
+  let enumerationError: unknown;
+  let v3Candidates: CacheCandidate[] = [];
+  let conflictState: ConflictState;
   try {
-    const v2Head = parseV2Head(await storage.getItem(SUPPORT_DIRECTORY_CACHE_HEAD_KEY));
-    if (v2Head) {
-      const v2Cache = parseV2Slot(await storage.getItem(v2Head.candidateKey), v2Head);
-      if (v2Cache) candidates.push({
-        cache: v2Cache,
-        content: JSON.stringify(v2Cache.data),
-        source: 'v2',
-      });
-    }
-  } catch {
-    // A legacy read failure cannot hide a valid immutable v3 snapshot.
-  }
-  try {
-    const legacy = parseCachedDirectory(await storage.getItem(SUPPORT_DIRECTORY_CACHE_KEY));
-    if (legacy) candidates.push({
-      cache: legacy,
-      content: JSON.stringify(legacy.data),
-      source: 'v1',
-    });
-  } catch {
-    // A legacy read failure cannot hide a valid immutable v3 snapshot.
+    const keys = await storage.getAllKeys();
+    const prepared = await prepareV3(storage, keys);
+    conflictState = prepared.conflictState;
+    v3Candidates = prepared.retained.map((snapshot) => ({
+      cache: snapshot.cache,
+      content: snapshot.content,
+      responseEpochMs: snapshot.responseEpochMs,
+      responseRevision: snapshot.responseRevision,
+      source: 'v3',
+    }));
+  } catch (error) {
+    enumerationError = error;
+    conflictState = await readConflictState(storage);
   }
 
-  const selected = selectCacheCandidate(candidates, snapshots.rejectedRevisions);
+  const legacyCandidates = await readLegacyCandidates(storage);
+  const candidates = [...v3Candidates, ...legacyCandidates];
+  await refreshDirectConflictEvidence(storage, conflictState, candidates);
+  await persistCandidateConflicts(storage, conflictState, candidates);
+  const selected = selectCacheCandidate(candidates, conflictState);
   if (selected && selected.source !== 'v3') await bestEffortMigrate(selected.cache, storage);
+  if (!selected && enumerationError) throw enumerationError;
   return selected?.cache ?? null;
 }
 
@@ -322,22 +617,22 @@ export async function stageCachedSupportDirectory(
   candidateId = createCandidateId(),
 ): Promise<StagedSupportDirectoryCache> {
   const parsed = SupportDirectoryResponseSchema.parse(data);
-  const normalizedCachedAt = new Date(cachedAt);
-  if (Number.isNaN(normalizedCachedAt.getTime()) || !/^[a-z0-9-]{1,100}$/i.test(candidateId)) {
+  const normalized = normalizeResponse(parsed);
+  const normalizedCachedAt = normalizeRevision(cachedAt);
+  if (!normalized || !normalizedCachedAt || !/^[a-z0-9-]{1,100}$/i.test(candidateId)) {
     throw new Error('Support cache snapshot metadata is invalid.');
   }
   const candidateKey = `${SUPPORT_DIRECTORY_CACHE_SLOT_PREFIX}${candidateId}`;
   const snapshot: SupportCacheSnapshot = {
     cacheSchemaVersion: 3,
     snapshotId: candidateId,
-    cachedAt: normalizedCachedAt.toISOString(),
-    responseRevision: parsed.fetchedAt,
-    data: parsed,
+    cachedAt: normalizedCachedAt.iso,
+    responseRevision: normalized.revision.iso,
+    data: normalized.data,
   };
   await storage.setItem(candidateKey, JSON.stringify(snapshot));
   try {
-    const current = await readSnapshots(storage);
-    await bestEffortRemove(storage, current.obsoleteKeys);
+    await prepareV3(storage, await storage.getAllKeys());
   } catch {
     // The complete immutable snapshot is durable even when pruning is unavailable.
   }
@@ -346,7 +641,7 @@ export async function stageCachedSupportDirectory(
     candidateId,
     candidateKey,
     cachedAt: snapshot.cachedAt,
-    payloadCanonical: JSON.stringify(parsed),
+    payloadCanonical: normalized.content,
     responseRevision: snapshot.responseRevision,
   };
 }
@@ -371,12 +666,11 @@ export async function commitStagedSupportDirectoryIfAuthoritative(
   const authoritativeBeforeCleanup = isAuthoritative();
   let equivalentSnapshotRetained = false;
   try {
-    const current = await readSnapshots(storage);
-    equivalentSnapshotRetained = current.retained.some((snapshot) => (
+    const prepared = await prepareV3(storage, await storage.getAllKeys());
+    equivalentSnapshotRetained = prepared.retained.some((snapshot) => (
       snapshot.responseRevision === candidate.responseRevision
       && snapshot.content === candidate.payloadCanonical
     ));
-    await bestEffortRemove(storage, current.obsoleteKeys);
   } catch {
     // Snapshot selection, not cleanup, provides correctness.
   }

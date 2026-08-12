@@ -185,6 +185,33 @@ test('newer refresh wins while manual save holds the exact older response revisi
   assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
 });
 
+test('manual save binds equivalent timestamp spellings to one canonical revision', async () => {
+  const storage = createStorage();
+  const coordinator = new SupportDirectoryCoordinator();
+  const authority = coordinator.beginRequest();
+  const response: SupportDirectoryResponse = {
+    ...directory,
+    fetchedAt: '2026-08-13T00:00:00Z',
+  };
+  const saved = await coordinator.saveManual(
+    authority,
+    response.fetchedAt,
+    response,
+    (value) => stageCachedSupportDirectory(value, storage, undefined, 'canonical-manual'),
+    (candidate, isAuthoritative) => commitStagedSupportDirectoryIfAuthoritative(
+      candidate,
+      isAuthoritative,
+      storage,
+    ),
+  );
+
+  assert.equal(saved, true);
+  assert.equal(
+    (await loadCachedSupportDirectory(storage))?.data.fetchedAt,
+    '2026-08-13T00:00:00.000Z',
+  );
+});
+
 test('unmount and remount while physical snapshot write is pending cannot regress cache', async () => {
   const storage = createStorage();
   const coordinator = new SupportDirectoryCoordinator();
