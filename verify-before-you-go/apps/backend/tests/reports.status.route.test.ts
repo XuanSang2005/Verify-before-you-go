@@ -82,7 +82,6 @@ test('wrong recovery key and unknown report ID return indistinguishable generic 
   const common = {
     method: 'POST' as const,
     url: '/api/v1/reports/status',
-    headers: { 'x-request-id': 'same-generic-request-id' },
   };
   const wrongKey = await app.inject({
     ...common,
@@ -95,11 +94,52 @@ test('wrong recovery key and unknown report ID return indistinguishable generic 
 
   assert.equal(wrongKey.statusCode, 404);
   assert.equal(unknownId.statusCode, 404);
-  assert.deepEqual(wrongKey.json(), unknownId.json());
-  assert.equal(ApiErrorSchema.parse(wrongKey.json()).error.code, 'REPORT_STATUS_UNAVAILABLE');
+  const wrongError = ApiErrorSchema.parse(wrongKey.json()).error;
+  const unknownError = ApiErrorSchema.parse(unknownId.json()).error;
+  assert.deepEqual(
+    { code: wrongError.code, message: wrongError.message },
+    { code: unknownError.code, message: unknownError.message },
+  );
+  assert.equal(wrongError.code, 'REPORT_STATUS_UNAVAILABLE');
   assert.doesNotMatch(wrongKey.body, new RegExp(`${reportId}|${wrongRecoveryKey}`, 'u'));
   assert.doesNotMatch(unknownId.body, new RegExp(`${unknownReportId}|${recoveryKey}`, 'u'));
   await app.close();
+});
+
+test('client request-ID headers cannot place report credentials in logs or error responses', async () => {
+  let capturedLogs = '';
+  const app = await buildStatusApp(createRepository(await createRecord()), {
+    level: 'info',
+    stream: { write: (message) => { capturedLogs += message; } },
+  });
+  const wrongKey = await app.inject({
+    method: 'POST',
+    url: '/api/v1/reports/status',
+    headers: { 'x-request-id': recoveryKey },
+    payload: { reportId, recoveryKey: wrongRecoveryKey },
+  });
+  const unknownId = await app.inject({
+    method: 'POST',
+    url: '/api/v1/reports/status',
+    headers: { 'x-request-id': unknownReportId },
+    payload: { reportId: unknownReportId, recoveryKey },
+  });
+  await app.close();
+
+  for (const response of [wrongKey, unknownId]) {
+    const error = ApiErrorSchema.parse(response.json()).error;
+    assert.equal(response.statusCode, 404);
+    assert.equal(error.code, 'REPORT_STATUS_UNAVAILABLE');
+    assert.match(error.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
+    assert.notEqual(error.requestId, recoveryKey);
+    assert.notEqual(error.requestId, unknownReportId);
+    assert.equal(response.body.includes(recoveryKey), false);
+    assert.equal(response.body.includes(reportId), false);
+    assert.equal(response.body.includes(unknownReportId), false);
+  }
+  assert.equal(capturedLogs.includes(recoveryKey), false);
+  assert.equal(capturedLogs.includes(reportId), false);
+  assert.equal(capturedLogs.includes(unknownReportId), false);
 });
 
 test('status lookup is strict and malformed requests consume its early bounded rate limit', async () => {

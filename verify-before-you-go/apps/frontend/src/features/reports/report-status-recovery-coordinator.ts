@@ -50,8 +50,9 @@ export interface ReportRecoverySnapshot {
 export type ReportRecoveryListener = (snapshot: ReportRecoverySnapshot) => void;
 
 export interface ReportRecoveryVaultPort {
+  captureMutationAuthority: () => number;
   read: () => Promise<{ records: RecoveryVaultRecord[] }>;
-  upsert: (record: RecoveryVaultRecord) => Promise<unknown>;
+  upsert: (record: RecoveryVaultRecord, authority?: number) => Promise<unknown | null>;
   clear: () => Promise<void>;
   whenIdle: () => Promise<void>;
 }
@@ -265,12 +266,14 @@ export class ReportStatusRecoveryCoordinator {
     generation: number,
   ): Promise<void> {
     if (!this.isReportCurrent(credential.reportId, session, generation)) return;
+    const vaultAuthority = this.dependencies.vault.captureMutationAuthority();
     if (await this.dependencies.platform() === 'web'
       || this.persistedCredentials.get(credential.reportId) === credential.recoveryKey) {
       return;
     }
     try {
-      await this.dependencies.vault.upsert(credential);
+      const persisted = await this.dependencies.vault.upsert(credential, vaultAuthority);
+      if (persisted === null) return;
       if (!this.isReportCurrent(credential.reportId, session, generation)) return;
       this.persistedCredentials.set(credential.reportId, credential.recoveryKey);
       this.publish({ ...this.snapshot, storageMessage: undefined });

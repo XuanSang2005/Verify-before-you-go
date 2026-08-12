@@ -126,6 +126,15 @@ describe('CP13 rendered My Reports', () => {
     expect(harness.container.textContent).toContain('This browser session');
     expect(harness.container.textContent).toContain('Refreshing the browser requires the key again.');
     expect(harness.container.textContent).toContain('Synthetic prototype · Example statuses only');
+    expect(harness.container.textContent).toContain('R-1042');
+    expect(harness.container.textContent).toContain('Customer support · Sihanoukville');
+    expect(harness.container.textContent).toContain('Privacy masks checked. Evidence review is next.');
+    expect(harness.container.textContent).toContain('Submitted today · Status preview');
+    expect(harness.container.textContent).toContain('R-0981');
+    expect(harness.container.textContent).toContain('Warehouse packing offer');
+    expect(harness.container.textContent).toContain('Add the original domain or a clearer contract page.');
+    expect(harness.container.textContent).toContain('Updated 28 Jul · Evidence preview');
+    expect(harness.container.textContent).not.toContain('Example report');
     expect(harness.container.textContent).toContain('does not mean verified, published or a scam verdict');
     expect(control(harness.container, 'my-reports-recovery-mascot').getAttribute('aria-label')).toBeNull();
     expect(harness.container.textContent).not.toContain(validRecoveryKey);

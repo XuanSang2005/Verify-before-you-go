@@ -397,25 +397,48 @@ function EmptyReportsPrototype({ showExamples }: { showExamples: boolean }) {
       {showExamples ? (
         <>
           <View style={styles.prototypeLabel}><Text style={styles.prototypeLabelText}>Synthetic prototype · Example statuses only</Text></View>
-          <PrototypeStatusCard label="Under review" text="Privacy checks are complete. Evidence review would be next." tone="blue" />
-          <PrototypeStatusCard label="More evidence needed" text="The service may ask for a clearer independently checkable source." tone="amber" />
+          <PrototypeStatusCard
+            guidance="Privacy masks checked. Evidence review is next."
+            label="Under review"
+            metadata="Submitted today · Status preview"
+            reportId="R-1042"
+            title="Customer support · Sihanoukville"
+            tone="blue"
+          />
+          <PrototypeStatusCard
+            guidance="Add the original domain or a clearer contract page."
+            label="More evidence needed"
+            metadata="Updated 28 Jul · Evidence preview"
+            reportId="R-0981"
+            title="Warehouse packing offer"
+            tone="amber"
+          />
         </>
       ) : null}
     </View>
   );
 }
 
-function PrototypeStatusCard({ label, text, tone }: { label: string; text: string; tone: 'amber' | 'blue' }) {
+function PrototypeStatusCard({ guidance, label, metadata, reportId, title, tone }: {
+  guidance: string;
+  label: string;
+  metadata: string;
+  reportId: string;
+  title: string;
+  tone: 'amber' | 'blue';
+}) {
   const amber = tone === 'amber';
   return (
-    <View accessible={false} importantForAccessibility="no-hide-descendants" style={[styles.prototypeCard, amber && styles.prototypeCardAmber]}>
+    <View style={[styles.prototypeCard, amber && styles.prototypeCardAmber]}>
       <View style={styles.reportTopRow}>
-        <Text style={styles.prototypeTitle}>Example report</Text>
+        <Text style={styles.reportId}>{reportId}</Text>
         <View style={[styles.statusBadge, amber ? styles.prototypeBadgeAmber : styles.prototypeBadgeBlue]}>
           <Text style={[styles.statusBadgeText, amber ? styles.prototypeBadgeAmberText : styles.prototypeBadgeBlueText]}>{label}</Text>
         </View>
       </View>
-      <Text style={styles.nextStep}>{text}</Text>
+      <Text style={styles.prototypeTitle}>{title}</Text>
+      <Text style={styles.nextStep}>{guidance}</Text>
+      <Text style={styles.prototypeMetadata}>{metadata}</Text>
     </View>
   );
 }
@@ -626,6 +649,7 @@ const styles = StyleSheet.create({
   prototypeCard: { minWidth: 0, gap: 7, padding: 12, borderWidth: 1, borderLeftWidth: 4, borderColor: colors.line, borderLeftColor: colors.sky, borderRadius: 12, backgroundColor: colors.paper, opacity: 0.82 },
   prototypeCardAmber: { borderLeftColor: colors.amber },
   prototypeTitle: { color: colors.navy, fontFamily: typography.bodySemiBold, fontSize: 14, lineHeight: 20 },
+  prototypeMetadata: { color: colors.blue, fontFamily: typography.mono, fontSize: 11, lineHeight: 16, letterSpacing: 0.35, textTransform: 'uppercase' },
   prototypeBadgeBlue: { borderColor: '#B8DDB0', backgroundColor: '#EEF9EB' },
   prototypeBadgeBlueText: { color: '#1E632B' },
   prototypeBadgeAmber: { borderColor: '#ECCB80', backgroundColor: colors.amberSoft },

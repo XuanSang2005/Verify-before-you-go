@@ -1,5 +1,6 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import { randomUUID } from 'node:crypto';
 
 import { registerAnalysisRoute } from './modules/analysis/analysis.route.js';
 import { registerAlertsRoutes } from './modules/alerts/alerts.route.js';
@@ -46,8 +47,11 @@ function createPrivacySafeLogger(logger: BuildAppOptions['logger']): FastifyServ
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     ajv: { customOptions: { removeAdditional: false } },
+    genReqId: () => randomUUID(),
     logger: createPrivacySafeLogger(options.logger),
-    requestIdHeader: 'x-request-id',
+    // Credentials can arrive in arbitrary client headers. Never let a caller
+    // choose the identifier Fastify copies into logs and public error bodies.
+    requestIdHeader: false,
     trustProxy: false,
   });
   await app.register(cors, { origin: options.corsOrigins });

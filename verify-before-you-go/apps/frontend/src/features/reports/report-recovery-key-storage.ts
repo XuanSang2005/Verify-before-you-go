@@ -84,6 +84,7 @@ type RecoveryKeyVaultStorageFactory = () => Promise<RecoveryKeyVaultStorageBindi
  * never silently replaced.
  */
 export class RecoveryKeyVaultCoordinator {
+  private mutationAuthority = 0;
   private tail: Promise<void> = Promise.resolve();
 
   constructor(private readonly createStorage: RecoveryKeyVaultStorageFactory = createSecureStoreBinding) {}
@@ -95,22 +96,37 @@ export class RecoveryKeyVaultCoordinator {
     });
   }
 
-  upsert(record: RecoveryVaultRecord): Promise<RecoveryVault> {
+  captureMutationAuthority(): number {
+    return this.mutationAuthority;
+  }
+
+  upsert(
+    record: RecoveryVaultRecord,
+    authority = this.captureMutationAuthority(),
+  ): Promise<RecoveryVault | null> {
     return this.serialize(async () => {
+      // This check runs inside the serialized mutation boundary. A clear can
+      // revoke a write while it is waiting for platform/storage resolution,
+      // without a check-then-queue TOCTOU window.
+      if (authority !== this.mutationAuthority) return null;
       if (!isRecoveryVaultRecord(record)) throw new InvalidRecoveryKeyVaultError();
       const { options, storage } = await this.createStorage();
       const current = parseRecoveryVault(await storage.getItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY));
+      if (authority !== this.mutationAuthority) return null;
       const next: RecoveryVault = {
         schemaVersion: RECOVERY_KEY_VAULT_SCHEMA_VERSION,
         records: [...current.records.filter((item) => item.reportId !== record.reportId), record],
       };
       await storage.setItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY, JSON.stringify(next), options);
-      return next;
+      return authority === this.mutationAuthority ? next : null;
     });
   }
 
   /** Explicit recovery action: one authoritative write replaces the entire vault. */
   clear(): Promise<void> {
+    // Revocation is synchronous. Any earlier authority is stale before the
+    // physical empty-vault mutation enters the serialized queue.
+    this.mutationAuthority += 1;
     return this.serialize(async () => {
       const { options, storage } = await this.createStorage();
       const empty: RecoveryVault = { schemaVersion: RECOVERY_KEY_VAULT_SCHEMA_VERSION, records: [] };
