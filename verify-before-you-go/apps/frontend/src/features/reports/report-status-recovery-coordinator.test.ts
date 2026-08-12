@@ -41,20 +41,25 @@ class MemoryVault {
   captureMutationAuthority() {
     return this.authority;
   }
+  revokePendingMutations() {
+    this.authority += 1;
+    return this.authority;
+  }
   async upsert(record: RecoveryVaultRecord, authority = this.captureMutationAuthority()) {
     if (authority !== this.authority) return null;
     this.writes += 1;
     this.records = [...this.records.filter((item) => item.reportId !== record.reportId), { ...record }];
     return { records: this.records };
   }
-  clear() {
-    this.authority += 1;
-    return this.performClear();
+  clear(authority = this.revokePendingMutations()) {
+    return this.performClear(authority);
   }
-  private async performClear() {
+  private async performClear(authority: number) {
+    if (authority !== this.authority) return false;
     this.clears += 1;
     this.records = [];
     this.corrupt = false;
+    return true;
   }
   async whenIdle() {}
 }
@@ -119,7 +124,7 @@ test('clear supersedes pending lookup so late success cannot restore or persist 
   assert.equal(vault.clears, 1);
 });
 
-test('clear revokes persistence delayed in platform resolution before it reaches the vault', async () => {
+test('clear revokes immediately while clear platform resolution is still pending', async () => {
   let raw: string | null = null;
   const vault = new RecoveryKeyVaultCoordinator(async () => ({
     storage: {
@@ -127,10 +132,14 @@ test('clear revokes persistence delayed in platform resolution before it reaches
       setItemAsync: async (_key, value) => { raw = value; },
     },
   }));
-  let releasePlatform!: (platform: string) => void;
-  let signalPlatform!: () => void;
-  const platformStarted = new Promise<void>((resolve) => { signalPlatform = resolve; });
-  const delayedPlatform = new Promise<string>((resolve) => { releasePlatform = resolve; });
+  let releasePersistencePlatform!: (platform: string) => void;
+  let signalPersistencePlatform!: () => void;
+  const persistencePlatformStarted = new Promise<void>((resolve) => { signalPersistencePlatform = resolve; });
+  const delayedPersistencePlatform = new Promise<string>((resolve) => { releasePersistencePlatform = resolve; });
+  let releaseClearPlatform!: (platform: string) => void;
+  let signalClearPlatform!: () => void;
+  const clearPlatformStarted = new Promise<void>((resolve) => { signalClearPlatform = resolve; });
+  const delayedClearPlatform = new Promise<string>((resolve) => { releaseClearPlatform = resolve; });
   let platformCalls = 0;
   const coordinator = new ReportStatusRecoveryCoordinator({
     lookup: async () => response,
@@ -138,19 +147,28 @@ test('clear revokes persistence delayed in platform resolution before it reaches
     platform: () => {
       platformCalls += 1;
       if (platformCalls === 1) {
-        signalPlatform();
-        return delayedPlatform;
+        signalPersistencePlatform();
+        return delayedPersistencePlatform;
       }
-      return Promise.resolve('ios');
+      signalClearPlatform();
+      return delayedClearPlatform;
     },
     now: () => new Date('2026-08-12T11:00:00.000Z'),
   });
 
   const adding = coordinator.addCredential(reportId, recoveryKey);
-  await platformStarted;
-  const cleared = await coordinator.clear();
-  releasePlatform('ios');
+  await persistencePlatformStarted;
+  const clearing = coordinator.clear();
+  await clearPlatformStarted;
+  releasePersistencePlatform('ios');
   await adding;
+  await vault.whenIdle();
+  // Clear has not reached its physical write yet, but the old authority was
+  // revoked synchronously and therefore cannot write the recovery key.
+  assert.equal(raw, null);
+
+  releaseClearPlatform('ios');
+  const cleared = await clearing;
   await vault.whenIdle();
 
   assert.deepEqual(cleared.records, []);
@@ -159,43 +177,48 @@ test('clear revokes persistence delayed in platform resolution before it reaches
   assert.equal((raw ?? '').includes(recoveryKey), false);
 });
 
-test('clear completes before a delayed old-authority upsert and the physical vault stays empty', async () => {
+test('serialized mutation boundary rejects a stale queued upsert before the empty write', async () => {
   let raw: string | null = null;
-  const serializedVault = new RecoveryKeyVaultCoordinator(async () => ({
+  let releaseQueue!: () => void;
+  let signalQueue!: () => void;
+  const queueHeld = new Promise<void>((resolve) => { signalQueue = resolve; });
+  const queueGate = new Promise<void>((resolve) => { releaseQueue = resolve; });
+  let holdFirstRead = true;
+  const writes: string[] = [];
+  const vault = new RecoveryKeyVaultCoordinator(async () => ({
     storage: {
-      getItemAsync: async () => raw,
-      setItemAsync: async (_key, value) => { raw = value; },
+      getItemAsync: async () => {
+        if (holdFirstRead) {
+          holdFirstRead = false;
+          signalQueue();
+          await queueGate;
+        }
+        return raw;
+      },
+      setItemAsync: async (_key, value) => {
+        writes.push(value);
+        raw = value;
+      },
     },
   }));
-  let releaseUpsert!: () => void;
-  let signalUpsert!: () => void;
-  const upsertStarted = new Promise<void>((resolve) => { signalUpsert = resolve; });
-  const upsertGate = new Promise<void>((resolve) => { releaseUpsert = resolve; });
-  const vault: ReportStatusRecoveryDependencies['vault'] = {
-    captureMutationAuthority: () => serializedVault.captureMutationAuthority(),
-    read: () => serializedVault.read(),
-    upsert: async (record, authority) => {
-      signalUpsert();
-      await upsertGate;
-      return serializedVault.upsert(record, authority);
-    },
-    clear: () => serializedVault.clear(),
-    whenIdle: () => serializedVault.whenIdle(),
-  };
-  const coordinator = new ReportStatusRecoveryCoordinator({
-    ...dependencies('ios', new MemoryVault()),
-    vault,
-  });
 
-  const adding = coordinator.addCredential(reportId, recoveryKey);
-  await upsertStarted;
-  const cleared = await coordinator.clear();
-  releaseUpsert();
-  await adding;
-  await serializedVault.whenIdle();
+  const holdingOperation = vault.read();
+  await queueHeld;
+  const staleAuthority = vault.captureMutationAuthority();
+  const staleUpsert = vault.upsert(
+    { reportId, recoveryKey, savedAt: '2026-08-12T11:00:00.000Z' },
+    staleAuthority,
+  );
+  const clearAuthority = vault.revokePendingMutations();
+  const clearing = vault.clear(clearAuthority);
+  releaseQueue();
 
-  assert.deepEqual(cleared.records, []);
-  assert.deepEqual(coordinator.getSnapshot().records, []);
+  await holdingOperation;
+  assert.equal(await staleUpsert, null);
+  assert.equal(await clearing, true);
+  await vault.whenIdle();
+
+  assert.equal(writes.length, 1);
   assert.deepEqual(JSON.parse(raw ?? '{}').records, []);
   assert.equal((raw ?? '').includes(recoveryKey), false);
 });
@@ -214,13 +237,14 @@ test('unmount plus clear invalidates pending persistence without restoring a phy
   const upsertGate = new Promise<void>((resolve) => { releaseUpsert = resolve; });
   const vault: ReportStatusRecoveryDependencies['vault'] = {
     captureMutationAuthority: () => serializedVault.captureMutationAuthority(),
+    revokePendingMutations: () => serializedVault.revokePendingMutations(),
     read: () => serializedVault.read(),
     upsert: async (record, authority) => {
       signalUpsert();
       await upsertGate;
       return serializedVault.upsert(record, authority);
     },
-    clear: () => serializedVault.clear(),
+    clear: (authority) => serializedVault.clear(authority),
     whenIdle: () => serializedVault.whenIdle(),
   };
   const coordinator = new ReportStatusRecoveryCoordinator({
@@ -372,6 +396,7 @@ test('route remount waits for an authoritative clear and cannot rehydrate a remo
     vault.clears += 1;
     await clearGate;
     vault.records = [];
+    return true;
   };
 
   const clearing = coordinator.clear();

@@ -106,7 +106,7 @@ test('wrong recovery key and unknown report ID return indistinguishable generic 
   await app.close();
 });
 
-test('client request-ID headers cannot place report credentials in logs or error responses', async () => {
+test('client request-ID and Host headers cannot place report credentials in logs or error responses', async () => {
   let capturedLogs = '';
   const app = await buildStatusApp(createRepository(await createRecord()), {
     level: 'info',
@@ -115,13 +115,13 @@ test('client request-ID headers cannot place report credentials in logs or error
   const wrongKey = await app.inject({
     method: 'POST',
     url: '/api/v1/reports/status',
-    headers: { 'x-request-id': recoveryKey },
+    headers: { host: recoveryKey, 'x-request-id': recoveryKey },
     payload: { reportId, recoveryKey: wrongRecoveryKey },
   });
   const unknownId = await app.inject({
     method: 'POST',
     url: '/api/v1/reports/status',
-    headers: { 'x-request-id': unknownReportId },
+    headers: { host: reportId, 'x-request-id': unknownReportId },
     payload: { reportId: unknownReportId, recoveryKey },
   });
   await app.close();

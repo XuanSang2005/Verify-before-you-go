@@ -36,7 +36,6 @@ function createPrivacySafeLogger(logger: BuildAppOptions['logger']): FastifyServ
         return {
           method: request.method,
           url: request.url.split('?')[0],
-          host: request.host,
           remoteAddress: request.ip,
         };
       },

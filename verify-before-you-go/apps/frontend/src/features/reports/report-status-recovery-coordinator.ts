@@ -51,9 +51,10 @@ export type ReportRecoveryListener = (snapshot: ReportRecoverySnapshot) => void;
 
 export interface ReportRecoveryVaultPort {
   captureMutationAuthority: () => number;
+  revokePendingMutations: () => number;
   read: () => Promise<{ records: RecoveryVaultRecord[] }>;
   upsert: (record: RecoveryVaultRecord, authority?: number) => Promise<unknown | null>;
-  clear: () => Promise<void>;
+  clear: (authority?: number) => Promise<boolean>;
   whenIdle: () => Promise<void>;
 }
 
@@ -157,12 +158,15 @@ export class ReportStatusRecoveryCoordinator {
   }
 
   clear(): Promise<ReportRecoverySnapshot> {
-    const operation = this.performClear();
+    // Revoke synchronously at the public clear entry, before platform
+    // resolution or any other await can let an old persistence resume.
+    const clearAuthority = this.dependencies.vault.revokePendingMutations();
+    const operation = this.performClear(clearAuthority);
     this.clearBarrier = operation.then(() => undefined, () => undefined);
     return operation;
   }
 
-  private async performClear(): Promise<ReportRecoverySnapshot> {
+  private async performClear(clearAuthority: number): Promise<ReportRecoverySnapshot> {
     const session = this.beginSessionOperation();
     const previousSnapshot = this.getSnapshot();
     this.reportGenerations.clear();
@@ -170,7 +174,8 @@ export class ReportStatusRecoveryCoordinator {
     const platform = await this.dependencies.platform();
     if (platform !== 'web') {
       try {
-        await this.dependencies.vault.clear();
+        const physicallyCleared = await this.dependencies.vault.clear(clearAuthority);
+        if (!physicallyCleared) throw new Error('Secure vault clear was superseded');
       } catch {
         if (this.isSessionCurrent(session)) {
           this.publish({

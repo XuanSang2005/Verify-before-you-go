@@ -14,6 +14,7 @@ import {
 import {
   InvalidRecoveryKeyVaultError,
   RECOVERY_KEY_VAULT_STORAGE_KEY,
+  RecoveryKeyVaultCoordinator,
   parseRecoveryVault,
   retainRecoveryKey,
   type SecureRecoveryStoragePort,
@@ -174,6 +175,98 @@ test('web never persists a recovery key and native uses one authoritative atomic
   assert.equal(calls[0]?.key, RECOVERY_KEY_VAULT_STORAGE_KEY);
   assert.match(calls[0]?.value ?? '', /2345-6789-ABCD/iu);
   assert.deepEqual(parseRecoveryVault(storedValue).records.map((record) => record.reportId), ['R-23456789ABCDEFGH']);
+});
+
+test('receipt retention captured before platform resolution cannot write after clear', async () => {
+  let storedValue: string | null = null;
+  const writes: string[] = [];
+  const vault = new RecoveryKeyVaultCoordinator(async () => ({
+    storage: {
+      getItemAsync: async () => storedValue,
+      setItemAsync: async (_key, value) => {
+        writes.push(value);
+        storedValue = value;
+      },
+    },
+  }));
+  let releasePlatform!: (platform: string) => void;
+  let signalPlatform!: () => void;
+  const platformStarted = new Promise<void>((resolve) => { signalPlatform = resolve; });
+  const platformGate = new Promise<string>((resolve) => { releasePlatform = resolve; });
+
+  const retaining = retainRecoveryKey(
+    response,
+    undefined,
+    undefined,
+    () => new Date('2026-08-11T10:01:00.000Z'),
+    {
+      vault,
+      resolvePlatform: () => {
+        signalPlatform();
+        return platformGate;
+      },
+    },
+  );
+  await platformStarted;
+  assert.equal(await vault.clear(), true);
+  releasePlatform('ios');
+  const result = await retaining;
+  await vault.whenIdle();
+
+  assert.equal(result.status, 'storage-failed');
+  assert.notEqual(result.status, 'saved-securely');
+  assert.equal(writes.length, 1);
+  assert.deepEqual(parseRecoveryVault(storedValue).records, []);
+  assert.equal((storedValue ?? '').includes(response.recoveryKey ?? ''), false);
+});
+
+test('receipt retention stale upsert is rejected inside the serialized vault queue', async () => {
+  let storedValue: string | null = null;
+  const writes: string[] = [];
+  let releaseQueue!: () => void;
+  let signalQueue!: () => void;
+  const queueHeld = new Promise<void>((resolve) => { signalQueue = resolve; });
+  const queueGate = new Promise<void>((resolve) => { releaseQueue = resolve; });
+  let holdFirstRead = true;
+  const vault = new RecoveryKeyVaultCoordinator(async () => ({
+    storage: {
+      getItemAsync: async () => {
+        if (holdFirstRead) {
+          holdFirstRead = false;
+          signalQueue();
+          await queueGate;
+        }
+        return storedValue;
+      },
+      setItemAsync: async (_key, value) => {
+        writes.push(value);
+        storedValue = value;
+      },
+    },
+  }));
+
+  const holdingOperation = vault.read();
+  await queueHeld;
+  const retaining = retainRecoveryKey(
+    response,
+    'ios',
+    undefined,
+    () => new Date('2026-08-11T10:01:00.000Z'),
+    { vault },
+  );
+  const clearing = vault.clear();
+  releaseQueue();
+
+  await holdingOperation;
+  const result = await retaining;
+  assert.equal(await clearing, true);
+  await vault.whenIdle();
+
+  assert.equal(result.status, 'storage-failed');
+  assert.notEqual(result.status, 'saved-securely');
+  assert.equal(writes.length, 1);
+  assert.deepEqual(parseRecoveryVault(storedValue).records, []);
+  assert.equal((storedValue ?? '').includes(response.recoveryKey ?? ''), false);
 });
 
 test('native recovery vault survives remount and a failed write leaves the previous valid state', async () => {

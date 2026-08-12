@@ -17,6 +17,11 @@ export interface RecoveryKeyRetentionResult {
   message: string;
 }
 
+export interface RecoveryKeyRetentionDependencies {
+  resolvePlatform?: () => Promise<string>;
+  vault?: RecoveryKeyVaultCoordinator;
+}
+
 export interface RecoveryVaultRecord {
   reportId: string;
   recoveryKey: string;
@@ -40,6 +45,7 @@ export async function retainRecoveryKey(
   platform?: string,
   storage?: SecureRecoveryStoragePort,
   now = () => new Date(),
+  dependencies: RecoveryKeyRetentionDependencies = {},
 ): Promise<RecoveryKeyRetentionResult> {
   if (!response.recoveryKey || response.recoveryKeyStatus === 'unavailable') {
     return {
@@ -48,7 +54,14 @@ export async function retainRecoveryKey(
     };
   }
 
-  const targetPlatform = platform ?? (await import('react-native')).Platform.OS;
+  const vault = dependencies.vault ?? (storage
+    ? new RecoveryKeyVaultCoordinator(async () => ({ storage }))
+    : recoveryKeyVaultCoordinator);
+  // Capture before platform resolution/import. A clear that starts while this
+  // receipt flow is suspended must make the eventual write stale.
+  const vaultAuthority = vault.captureMutationAuthority();
+  const targetPlatform = platform ?? await (dependencies.resolvePlatform?.()
+    ?? import('react-native').then(({ Platform }) => Platform.OS));
   if (targetPlatform === 'web') {
     return {
       status: 'shown-once-web',
@@ -61,10 +74,13 @@ export async function retainRecoveryKey(
     recoveryKey: response.recoveryKey,
     savedAt: now().toISOString(),
   };
-  const vault = storage
-    ? new RecoveryKeyVaultCoordinator(async () => ({ storage }))
-    : recoveryKeyVaultCoordinator;
-  await vault.upsert(nextRecord);
+  const persisted = await vault.upsert(nextRecord, vaultAuthority);
+  if (persisted === null) {
+    return {
+      status: 'storage-failed',
+      message: 'The recovery key was not saved because secure storage changed. Copy it now and retry safely.',
+    };
+  }
   return {
     status: 'saved-securely',
     message: 'The recovery key was saved in secure device storage.',
@@ -100,6 +116,11 @@ export class RecoveryKeyVaultCoordinator {
     return this.mutationAuthority;
   }
 
+  revokePendingMutations(): number {
+    this.mutationAuthority += 1;
+    return this.mutationAuthority;
+  }
+
   upsert(
     record: RecoveryVaultRecord,
     authority = this.captureMutationAuthority(),
@@ -123,14 +144,14 @@ export class RecoveryKeyVaultCoordinator {
   }
 
   /** Explicit recovery action: one authoritative write replaces the entire vault. */
-  clear(): Promise<void> {
-    // Revocation is synchronous. Any earlier authority is stale before the
-    // physical empty-vault mutation enters the serialized queue.
-    this.mutationAuthority += 1;
+  clear(authority = this.revokePendingMutations()): Promise<boolean> {
     return this.serialize(async () => {
+      if (authority !== this.mutationAuthority) return false;
       const { options, storage } = await this.createStorage();
+      if (authority !== this.mutationAuthority) return false;
       const empty: RecoveryVault = { schemaVersion: RECOVERY_KEY_VAULT_SCHEMA_VERSION, records: [] };
       await storage.setItemAsync(RECOVERY_KEY_VAULT_STORAGE_KEY, JSON.stringify(empty), options);
+      return authority === this.mutationAuthority;
     });
   }
 
