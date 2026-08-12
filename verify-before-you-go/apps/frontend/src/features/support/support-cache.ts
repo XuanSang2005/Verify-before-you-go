@@ -514,6 +514,21 @@ async function persistConflictMarker(
   }
 }
 
+async function ensureHorizonFlag(storage: SupportCacheStoragePort) {
+  const flag: SupportCacheHorizonFlag = {
+    cacheSchemaVersion: 3,
+    kind: 'conflict-horizon-present',
+  };
+  try {
+    await storage.setItem(SUPPORT_DIRECTORY_CACHE_HORIZON_FLAG_KEY, JSON.stringify(flag));
+    return Boolean(parseHorizonFlag(
+      await storage.getItem(SUPPORT_DIRECTORY_CACHE_HORIZON_FLAG_KEY),
+    ));
+  } catch {
+    return false;
+  }
+}
+
 async function compactConflictMarkers(storage: SupportCacheStoragePort, state: ConflictState) {
   if (state.metadataUnsafe) return;
   const markers = [...state.markers.entries()].sort(([left], [right]) => right - left);
@@ -529,6 +544,7 @@ async function compactConflictMarkers(storage: SupportCacheStoragePort, state: C
   const evicted = active.slice(MAX_RETAINED_CONFLICT_MARKERS);
   if (evicted.length === 0) {
     if (effectiveHorizon !== undefined) {
+      if (!await ensureHorizonFlag(storage)) return;
       const weakerHorizons = [...state.horizons.entries()]
         .filter(([epochMs]) => epochMs < effectiveHorizon)
         .map(([, key]) => key);
@@ -553,12 +569,7 @@ async function compactConflictMarkers(storage: SupportCacheStoragePort, state: C
     await storage.setItem(key, JSON.stringify(horizon));
     const persisted = parseConflictHorizon(key, await storage.getItem(key));
     if (!persisted || persisted.rejectAtOrBeforeEpochMs < horizonEpochMs) return;
-    const flag: SupportCacheHorizonFlag = {
-      cacheSchemaVersion: 3,
-      kind: 'conflict-horizon-present',
-    };
-    await storage.setItem(SUPPORT_DIRECTORY_CACHE_HORIZON_FLAG_KEY, JSON.stringify(flag));
-    if (!parseHorizonFlag(await storage.getItem(SUPPORT_DIRECTORY_CACHE_HORIZON_FLAG_KEY))) return;
+    if (!await ensureHorizonFlag(storage)) return;
     state.horizons.set(persisted.rejectAtOrBeforeEpochMs, key);
     const weakerHorizons = [...state.horizons.entries()]
       .filter(([epochMs]) => epochMs < persisted.rejectAtOrBeforeEpochMs)
@@ -667,22 +678,10 @@ async function refreshConflictStateBeforeSelection(
   }
   mergeConflictStates(current, latest);
   await refreshDirectConflictEvidence(storage, current, candidates);
-  // Re-enumerate after direct marker probes. Horizon writers publish the
-  // immutable horizon and safety flag before deleting covered exact markers,
-  // so a rejection completed during this refresh is observed in one of the two
-  // passes before the synchronous final selection.
-  try {
-    const trailingKeys = await storage.getAllKeys();
-    mergeConflictStates(
-      current,
-      await readConflictState(storage, trailingKeys, true),
-    );
-  } catch {
-    mergeConflictStates(
-      current,
-      await readConflictState(storage, [], false),
-    );
-  }
+  // The returned cache is consistent with this final successfully read metadata
+  // snapshot. A cross-context rejection published after this snapshot is
+  // intentionally observed by the next load or refresh; AsyncStorage does not
+  // provide a transaction/lock that could make this read linearizable.
   return current;
 }
 

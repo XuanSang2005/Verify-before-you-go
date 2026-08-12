@@ -88,6 +88,17 @@ function putHorizon(storage: ReturnType<typeof createStorage>, revision: string)
   }));
 }
 
+function putHorizonWithoutFlag(storage: ReturnType<typeof createStorage>, revision: string) {
+  const normalized = new Date(revision).toISOString();
+  const epochMs = new Date(normalized).getTime();
+  storage.values.set(`${SUPPORT_DIRECTORY_CACHE_HORIZON_PREFIX}${epochMs}`, JSON.stringify({
+    cacheSchemaVersion: 3,
+    kind: 'revision-conflict-horizon',
+    rejectAtOrBefore: normalized,
+    rejectAtOrBeforeEpochMs: epochMs,
+  }));
+}
+
 test('immutable snapshots choose the newest response revision without an authoritative head', async () => {
   const storage = createStorage();
   await saveCachedSupportDirectory(newerDirectory, storage, '2026-08-13T01:00:00.000Z');
@@ -348,7 +359,81 @@ test('immutable horizons cannot be lowered by a delayed browser tab', async () =
   assert.ok(horizonKeys(storage).length <= 1);
 });
 
-test('final metadata refresh sees a stronger horizon completed by another tab', async () => {
+test('horizon crash state repairs durable flag before deleting covered exact marker', async () => {
+  const storage = createStorage();
+  putHorizonWithoutFlag(storage, directory.fetchedAt);
+  putConflictMarker(storage, directory.fetchedAt);
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-12T01:00:00.000Z',
+    data: directory,
+  }));
+
+  const epochMs = new Date(directory.fetchedAt).getTime();
+  const markerKey = `${SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX}${epochMs}`;
+  const operationOrder: string[] = [];
+  const baseSet = storage.setItem;
+  const baseGet = storage.getItem;
+  const baseRemove = storage.removeItem;
+  storage.setItem = async (key, value) => {
+    if (key === '@vbyg/support-directory/v3/has-conflict-horizon') operationOrder.push('flag-write');
+    await baseSet(key, value);
+  };
+  storage.getItem = async (key) => {
+    const value = await baseGet(key);
+    if (key === '@vbyg/support-directory/v3/has-conflict-horizon' && value !== null) {
+      operationOrder.push('flag-read');
+    }
+    return value;
+  };
+  storage.removeItem = async (key) => {
+    if (key === markerKey) operationOrder.push('marker-remove');
+    await baseRemove(key);
+  };
+
+  assert.equal(await loadCachedSupportDirectory(storage), null);
+  assert.ok(storage.values.has('@vbyg/support-directory/v3/has-conflict-horizon'));
+  assert.equal(storage.values.has(markerKey), false);
+  assert.ok(operationOrder.indexOf('flag-write') < operationOrder.indexOf('flag-read'));
+  assert.ok(operationOrder.indexOf('flag-read') < operationOrder.indexOf('marker-remove'));
+
+  const restarted: SupportCacheStoragePort = {
+    getAllKeys: async () => { throw new Error('enumeration unavailable'); },
+    getItem: storage.getItem,
+    removeItem: storage.removeItem,
+    setItem: storage.setItem,
+  };
+  await assert.rejects(
+    () => loadCachedSupportDirectory(restarted),
+    /enumeration unavailable/,
+  );
+});
+
+test('failed horizon-flag repair retains marker and keeps covered legacy rejected', async () => {
+  const storage = createStorage();
+  putHorizonWithoutFlag(storage, directory.fetchedAt);
+  putConflictMarker(storage, directory.fetchedAt);
+  storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    cachedAt: '2026-08-12T01:00:00.000Z',
+    data: directory,
+  }));
+  const epochMs = new Date(directory.fetchedAt).getTime();
+  const markerKey = `${SUPPORT_DIRECTORY_CACHE_CONFLICT_PREFIX}${epochMs}`;
+  const baseSet = storage.setItem;
+  storage.setItem = async (key, value) => {
+    if (key === '@vbyg/support-directory/v3/has-conflict-horizon') {
+      throw new Error('flag write failed');
+    }
+    await baseSet(key, value);
+  };
+
+  assert.equal(await loadCachedSupportDirectory(storage), null);
+  assert.equal(storage.values.has(markerKey), true);
+  assert.equal(storage.values.has('@vbyg/support-directory/v3/has-conflict-horizon'), false);
+});
+
+test('final metadata snapshot includes a stronger horizon already published by another tab', async () => {
   const storage = createStorage();
   storage.values.set(SUPPORT_DIRECTORY_CACHE_KEY, JSON.stringify({
     schemaVersion: 1,
