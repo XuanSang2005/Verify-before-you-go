@@ -6,11 +6,19 @@ import type { SupportDirectoryResponse } from '@vbyg/contracts';
 import { SupportApiError } from '@/api/support';
 
 import {
+  commitStagedSupportDirectory,
+  commitStagedSupportDirectoryIfAuthoritative,
+  loadCachedSupportDirectory,
+  stageCachedSupportDirectory,
+  SUPPORT_DIRECTORY_CACHE_HEAD_KEY,
+  type SupportCacheStoragePort,
+} from './support-cache';
+import { SupportDirectoryCoordinator } from './support-coordinator';
+import {
   loadSupportDirectoryState,
   SupersededSupportDirectoryAttemptError,
   type SupportDirectoryDependencies,
 } from './use-support-directory';
-import { SupportDirectoryCoordinator } from './support-coordinator';
 
 const directory: SupportDirectoryResponse = {
   schemaVersion: 1,
@@ -19,20 +27,38 @@ const directory: SupportDirectoryResponse = {
   directoryNotice: 'This directory does not monitor emergencies or verify that help is currently available. Contact and location sharing happen only when you choose an action.',
 };
 
-function dependencies(overrides: Partial<SupportDirectoryDependencies> = {}): SupportDirectoryDependencies {
-  return {
-    coordinator: new SupportDirectoryCoordinator(),
-    fetchDirectory: async () => directory,
-    loadCache: async () => null,
-    saveCache: async () => undefined,
-    ...overrides,
-  };
-}
-
 const newerDirectory: SupportDirectoryResponse = {
   ...directory,
   fetchedAt: '2026-08-13T00:00:00.000Z',
 };
+
+function createStorage(): SupportCacheStoragePort & { values: Map<string, string> } {
+  const values = new Map<string, string>();
+  return {
+    values,
+    getItem: async (key) => values.get(key) ?? null,
+    removeItem: async (key) => { values.delete(key); },
+    setItem: async (key, value) => { values.set(key, value); },
+  };
+}
+
+function dependencies(
+  storage: SupportCacheStoragePort = createStorage(),
+  overrides: Partial<SupportDirectoryDependencies> = {},
+): SupportDirectoryDependencies {
+  return {
+    coordinator: new SupportDirectoryCoordinator(),
+    fetchDirectory: async () => directory,
+    loadCache: () => loadCachedSupportDirectory(storage),
+    stageCache: (value) => stageCachedSupportDirectory(value, storage),
+    commitCache: (candidate, isAuthoritative) => commitStagedSupportDirectoryIfAuthoritative(
+      candidate,
+      isAuthoritative,
+      storage,
+    ),
+    ...overrides,
+  };
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -48,202 +74,179 @@ function apiError(kind: 'network' | 'http' | 'invalid-response', status?: number
   return new SupportApiError({ kind, message: `${kind} failure`, status });
 }
 
-test('successful support fetch updates the offline cache without storing private input', async () => {
-  let saved: SupportDirectoryResponse | undefined;
-  const state = await loadSupportDirectoryState(dependencies({
-    saveCache: async (value) => { saved = value; },
-  }));
+test('successful fetch commits the strict public response for offline use', async () => {
+  const storage = createStorage();
+  const state = await loadSupportDirectoryState(dependencies(storage));
   assert.equal(state.status, 'empty');
   assert.equal(state.savedOffline, true);
-  assert.equal(saved?.schemaVersion, 1);
+  assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, directory.fetchedAt);
 });
 
-test('network failure uses saved support contacts with an explicit offline disclosure', async () => {
-  const state = await loadSupportDirectoryState(dependencies({
+test('network failure uses newest committed cache and first launch uses bundle', async () => {
+  const storage = createStorage();
+  const staged = await stageCachedSupportDirectory(newerDirectory, storage, '2026-08-13T01:00:00.000Z');
+  await commitStagedSupportDirectory(staged, storage);
+  const cachedState = await loadSupportDirectoryState(dependencies(storage, {
     fetchDirectory: async () => { throw apiError('network'); },
-    loadCache: async () => ({ schemaVersion: 1, cachedAt: '2026-08-13T01:00:00.000Z', data: newerDirectory }),
   }));
-  assert.equal(state.status, 'offline');
-  assert.equal(state.message, 'Offline · showing saved contacts');
-  assert.equal(state.cachedAt, '2026-08-13T01:00:00.000Z');
-});
+  assert.equal(cachedState.status, 'offline');
+  assert.equal(cachedState.fallbackKind, 'cache');
+  assert.equal(cachedState.response?.fetchedAt, newerDirectory.fetchedAt);
 
-test('first launch in airplane mode falls back to the production bundle', async () => {
-  const state = await loadSupportDirectoryState(dependencies({
+  const bundleState = await loadSupportDirectoryState(dependencies(createStorage(), {
     fetchDirectory: async () => { throw apiError('network'); },
-    loadCache: async () => null,
   }));
-  assert.equal(state.status, 'offline');
-  assert.equal(state.fallbackKind, 'bundle');
-  assert.ok((state.response?.contacts.length ?? 0) >= 8);
-  assert.match(state.fallbackNotice ?? '', /verify availability/i);
+  assert.equal(bundleState.status, 'offline');
+  assert.equal(bundleState.fallbackKind, 'bundle');
+  assert.match(bundleState.fallbackNotice ?? '', /verify availability/i);
 });
 
-test('HTTP 500 with cache is service unavailable, while invalid data fails closed', async () => {
-  const cached = async () => ({ schemaVersion: 1 as const, cachedAt: '2026-08-13T01:00:00.000Z', data: newerDirectory });
-  const unavailable = await loadSupportDirectoryState(dependencies({
+test('HTTP 500 may use committed cache while invalid parsed data fails closed', async () => {
+  const storage = createStorage();
+  const staged = await stageCachedSupportDirectory(newerDirectory, storage);
+  await commitStagedSupportDirectory(staged, storage);
+  const unavailable = await loadSupportDirectoryState(dependencies(storage, {
     fetchDirectory: async () => { throw apiError('http', 500); },
-    loadCache: cached,
   }));
   assert.equal(unavailable.status, 'service-unavailable');
+  assert.equal(unavailable.response?.fetchedAt, newerDirectory.fetchedAt);
 
-  const invalid = await loadSupportDirectoryState(dependencies({
+  const invalid = await loadSupportDirectoryState(dependencies(storage, {
     fetchDirectory: async () => { throw apiError('invalid-response'); },
-    loadCache: cached,
   }));
   assert.equal(invalid.status, 'error');
   assert.equal(invalid.response, undefined);
 });
 
-test('a superseded request cannot write cache or return ready state after a newer request', async () => {
+test('stale physical candidate cannot replace head after revocation and newer request', async () => {
+  const storage = createStorage();
   const coordinator = new SupportDirectoryCoordinator();
-  const oldFetch = deferred<SupportDirectoryResponse>();
-  const writes: string[] = [];
-  const base = dependencies({
-    coordinator,
-    saveCache: async (value) => { writes.push(value.fetchedAt); },
-  });
+  const oldStageGate = deferred<void>();
+  let oldCandidateEnteredStorage = false;
+  const base = dependencies(storage, { coordinator });
+  const oldAuthority = coordinator.beginRequest();
   const oldAttempt = loadSupportDirectoryState({
     ...base,
-    fetchDirectory: async () => oldFetch.promise,
-  });
+    fetchDirectory: async () => directory,
+    stageCache: async (value) => {
+      const candidate = await stageCachedSupportDirectory(value, storage, undefined, 'old-request');
+      oldCandidateEnteredStorage = true;
+      await oldStageGate.promise;
+      return candidate;
+    },
+  }, oldAuthority);
+  while (!oldCandidateEnteredStorage) await Promise.resolve();
+
+  coordinator.revokeRequest(oldAuthority);
   const newState = await loadSupportDirectoryState({
     ...base,
     fetchDirectory: async () => newerDirectory,
   });
-  oldFetch.resolve(directory);
+  oldStageGate.resolve();
 
   assert.equal(newState.response?.fetchedAt, newerDirectory.fetchedAt);
   await assert.rejects(oldAttempt, SupersededSupportDirectoryAttemptError);
-  assert.deepEqual(writes, [newerDirectory.fetchedAt]);
+  assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
 });
 
-test('an older network fallback cannot return offline after a newer request starts', async () => {
+test('newer refresh wins while manual save holds the exact older response revision', async () => {
+  const storage = createStorage();
   const coordinator = new SupportDirectoryCoordinator();
-  const cacheRead = deferred<null>();
-  const base = dependencies({ coordinator });
-  const oldAttempt = loadSupportDirectoryState({
-    ...base,
-    fetchDirectory: async () => { throw apiError('network'); },
-    loadCache: async () => cacheRead.promise,
-  });
-  await Promise.resolve();
-  const newAttempt = loadSupportDirectoryState({
-    ...base,
-    fetchDirectory: async () => newerDirectory,
-  });
-  cacheRead.resolve(null);
-
-  await assert.rejects(oldAttempt, SupersededSupportDirectoryAttemptError);
-  assert.equal((await newAttempt).response?.fetchedAt, newerDirectory.fetchedAt);
-});
-
-test('revoking an unmounted request prevents late cache and state authority', async () => {
-  const coordinator = new SupportDirectoryCoordinator();
-  const fetchGate = deferred<SupportDirectoryResponse>();
-  let writes = 0;
-  const authority = coordinator.beginRequest();
-  const attempt = loadSupportDirectoryState(dependencies({
-    coordinator,
-    fetchDirectory: async () => fetchGate.promise,
-    saveCache: async () => { writes += 1; },
-  }), authority);
-
-  coordinator.revokeRequest(authority);
-  fetchGate.resolve(directory);
-  await assert.rejects(attempt, SupersededSupportDirectoryAttemptError);
-  assert.equal(writes, 0);
-});
-
-test('a stale request queued behind another mutation is rejected at the cache boundary', async () => {
-  const coordinator = new SupportDirectoryCoordinator();
-  const queueGate = deferred<void>();
-  const queueHolder = coordinator.saveManual(directory, async () => {
-    await queueGate.promise;
-  });
-  await Promise.resolve();
-
-  let staleWrites = 0;
+  const manualStageGate = deferred<void>();
+  let manualEnteredStorage = false;
   const oldAuthority = coordinator.beginRequest();
-  const oldAttempt = loadSupportDirectoryState(dependencies({
+  const manualSave = coordinator.saveManual(
+    oldAuthority,
+    directory.fetchedAt,
+    directory,
+    async (value) => {
+      const candidate = await stageCachedSupportDirectory(value, storage, undefined, 'manual-old');
+      manualEnteredStorage = true;
+      await manualStageGate.promise;
+      return candidate;
+    },
+    (candidate, isAuthoritative) => commitStagedSupportDirectoryIfAuthoritative(
+      candidate,
+      isAuthoritative,
+      storage,
+    ),
+  );
+  while (!manualEnteredStorage) await Promise.resolve();
+
+  const refreshed = await loadSupportDirectoryState(dependencies(storage, {
+    coordinator,
+    fetchDirectory: async () => newerDirectory,
+  }));
+  manualStageGate.resolve();
+
+  assert.equal(refreshed.response?.fetchedAt, newerDirectory.fetchedAt);
+  assert.equal(await manualSave, false);
+  assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
+});
+
+test('unmount and remount while physical head write is pending cannot regress cache', async () => {
+  const storage = createStorage();
+  const coordinator = new SupportDirectoryCoordinator();
+  const initial = await stageCachedSupportDirectory(newerDirectory, storage, undefined, 'initial-new');
+  await commitStagedSupportDirectory(initial, storage);
+  const gate = deferred<void>();
+  let headWriteEntered = false;
+  const baseSetItem = storage.setItem;
+  storage.setItem = async (key, value) => {
+    if (
+      key === SUPPORT_DIRECTORY_CACHE_HEAD_KEY
+      && JSON.parse(value).candidateId === 'unmounted-old'
+    ) {
+      headWriteEntered = true;
+      await gate.promise;
+    }
+    await baseSetItem(key, value);
+  };
+  const oldAuthority = coordinator.beginRequest();
+  const staleAttempt = loadSupportDirectoryState(dependencies(storage, {
     coordinator,
     fetchDirectory: async () => directory,
-    saveCache: async () => { staleWrites += 1; },
+    stageCache: (value) => stageCachedSupportDirectory(value, storage, undefined, 'unmounted-old'),
   }), oldAuthority);
-  await Promise.resolve();
-  coordinator.beginRequest();
-  queueGate.resolve();
+  while (!headWriteEntered) await Promise.resolve();
 
-  await queueHolder;
-  await assert.rejects(oldAttempt, SupersededSupportDirectoryAttemptError);
-  assert.equal(staleWrites, 0);
-});
-
-test('manual save overlap is serialized and the latest mutation owns physical cache', async () => {
-  const coordinator = new SupportDirectoryCoordinator();
-  const oldWriteGate = deferred<void>();
-  let physical: SupportDirectoryResponse | undefined;
-  const oldSave = coordinator.saveManual(directory, async (value) => {
-    await oldWriteGate.promise;
-    physical = value;
-  });
-  await Promise.resolve();
-  const newSave = coordinator.saveManual(newerDirectory, async (value) => {
-    physical = value;
-  });
-  oldWriteGate.resolve();
-
-  assert.equal(await oldSave, false);
-  assert.equal(await newSave, true);
-  assert.equal(physical?.fetchedAt, newerDirectory.fetchedAt);
-});
-
-test('a stale manual write failure cannot override a newer successful mutation', async () => {
-  const coordinator = new SupportDirectoryCoordinator();
-  const oldWriteGate = deferred<void>();
-  const oldSave = coordinator.saveManual(directory, async () => {
-    await oldWriteGate.promise;
-    throw new Error('old disk failure');
-  });
-  await Promise.resolve();
-  const newSave = coordinator.saveManual(newerDirectory, async () => undefined);
-  oldWriteGate.resolve();
-
-  assert.equal(await oldSave, false);
-  assert.equal(await newSave, true);
-});
-
-test('network fallback reads cache after earlier authoritative mutations finish', async () => {
-  const coordinator = new SupportDirectoryCoordinator();
-  const writeGate = deferred<void>();
-  let physical: SupportDirectoryResponse | null = null;
-  const manualSave = coordinator.saveManual(newerDirectory, async (value) => {
-    await writeGate.promise;
-    physical = value;
-  });
-  await Promise.resolve();
-
-  const attempt = loadSupportDirectoryState(dependencies({
+  coordinator.revokeRequest(oldAuthority);
+  const remounted = loadSupportDirectoryState(dependencies(storage, {
     coordinator,
     fetchDirectory: async () => { throw apiError('network'); },
-    loadCache: async () => physical ? ({
-      schemaVersion: 1,
-      cachedAt: '2026-08-13T01:00:00.000Z',
-      data: physical,
-    }) : null,
   }));
-  writeGate.resolve();
-  await manualSave;
-  const state = await attempt;
-  assert.equal(state.fallbackKind, 'cache');
-  assert.equal(state.response?.fetchedAt, newerDirectory.fetchedAt);
+  gate.resolve();
+
+  await assert.rejects(staleAttempt, SupersededSupportDirectoryAttemptError);
+  assert.equal((await remounted).response?.fetchedAt, newerDirectory.fetchedAt);
+  assert.equal((await loadCachedSupportDirectory(storage))?.data.fetchedAt, newerDirectory.fetchedAt);
 });
 
-test('cache write failure keeps live data visible with an honest storage warning', async () => {
-  const state = await loadSupportDirectoryState(dependencies({
-    saveCache: async () => { throw new Error('disk full'); },
+test('network fallback ignores a newer-looking orphan slot and reads only committed head', async () => {
+  const storage = createStorage();
+  const committed = await stageCachedSupportDirectory(directory, storage, undefined, 'committed-old');
+  await commitStagedSupportDirectory(committed, storage);
+  await stageCachedSupportDirectory(newerDirectory, storage, undefined, 'orphan-new');
+  const headBefore = storage.values.get(SUPPORT_DIRECTORY_CACHE_HEAD_KEY);
+
+  const state = await loadSupportDirectoryState(dependencies(storage, {
+    fetchDirectory: async () => { throw apiError('network'); },
   }));
-  assert.equal(state.status, 'empty');
-  assert.equal(state.savedOffline, false);
-  assert.match(state.storageMessage ?? '', /could not update/i);
+  assert.equal(state.response?.fetchedAt, directory.fetchedAt);
+  assert.equal(storage.values.get(SUPPORT_DIRECTORY_CACHE_HEAD_KEY), headBefore);
+});
+
+test('cache stage and commit failures keep live data visible with honest warning', async () => {
+  const stageFailure = await loadSupportDirectoryState(dependencies(createStorage(), {
+    stageCache: async () => { throw new Error('disk full'); },
+  }));
+  assert.equal(stageFailure.status, 'empty');
+  assert.equal(stageFailure.savedOffline, false);
+  assert.match(stageFailure.storageMessage ?? '', /could not update/i);
+
+  const commitFailure = await loadSupportDirectoryState(dependencies(createStorage(), {
+    commitCache: async () => { throw new Error('head write failed'); },
+  }));
+  assert.equal(commitFailure.savedOffline, false);
+  assert.match(commitFailure.storageMessage ?? '', /could not update/i);
 });

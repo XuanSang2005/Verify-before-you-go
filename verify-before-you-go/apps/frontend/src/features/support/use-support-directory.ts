@@ -9,7 +9,8 @@ import {
 import { bundledSupportDirectory } from './support-bundle';
 import {
   loadCachedSupportDirectory,
-  saveCachedSupportDirectory,
+  commitStagedSupportDirectoryIfAuthoritative,
+  stageCachedSupportDirectory,
   type CachedSupportDirectory,
 } from './support-cache';
 import {
@@ -45,14 +46,16 @@ export type SupportDirectoryState = {
 export type SupportDirectoryDependencies = {
   fetchDirectory: typeof fetchSupportDirectory;
   loadCache: typeof loadCachedSupportDirectory;
-  saveCache: typeof saveCachedSupportDirectory;
+  stageCache: typeof stageCachedSupportDirectory;
+  commitCache: typeof commitStagedSupportDirectoryIfAuthoritative;
   coordinator?: SupportDirectoryCoordinator;
 };
 
 const defaultDependencies: SupportDirectoryDependencies = {
   fetchDirectory: fetchSupportDirectory,
   loadCache: loadCachedSupportDirectory,
-  saveCache: saveCachedSupportDirectory,
+  stageCache: stageCachedSupportDirectory,
+  commitCache: commitStagedSupportDirectoryIfAuthoritative,
   coordinator: supportDirectoryCoordinator,
 };
 
@@ -125,7 +128,8 @@ export async function loadSupportDirectoryState(
       const saved = await coordinator.saveForRequest(
         requestAuthority,
         response,
-        dependencies.saveCache,
+        dependencies.stageCache,
+        dependencies.commitCache,
       );
       assertAuthority(coordinator, requestAuthority);
       if (!saved) throw new SupersededSupportDirectoryAttemptError();
@@ -202,6 +206,7 @@ export function useSupportDirectory(
   const [state, setState] = useState<SupportDirectoryState>({ status: 'loading' });
   const saveInFlightRef = useRef(false);
   const mountedRef = useRef(true);
+  const activeRequestAuthorityRef = useRef<SupportRequestAuthority | undefined>(undefined);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -210,6 +215,7 @@ export function useSupportDirectory(
 
   useEffect(() => {
     const authority = coordinator.beginRequest();
+    activeRequestAuthorityRef.current = authority;
     void loadSupportDirectoryState(stableDependencies, authority).then((nextState) => {
       if (mountedRef.current && coordinator.isRequestAuthoritative(authority)) {
         setState(nextState);
@@ -220,7 +226,12 @@ export function useSupportDirectory(
         setState({ status: 'error', message: errorMessage(error, 'The support directory could not be loaded.') });
       }
     });
-    return () => { coordinator.revokeRequest(authority); };
+    return () => {
+      coordinator.revokeRequest(authority);
+      if (activeRequestAuthorityRef.current === authority) {
+        activeRequestAuthorityRef.current = undefined;
+      }
+    };
   }, [attempt, coordinator, stableDependencies]);
 
   const retry = useCallback(() => {
@@ -232,8 +243,11 @@ export function useSupportDirectory(
   }, [state.refreshing]);
 
   const saveOffline = useCallback(async () => {
-    if (!state.response || saveInFlightRef.current) return;
+    if (!state.response || state.refreshing || saveInFlightRef.current) return;
     const response = state.response;
+    const responseRevision = response.fetchedAt;
+    const authority = activeRequestAuthorityRef.current;
+    if (authority === undefined) return;
     saveInFlightRef.current = true;
     setState((current) => ({
       ...current,
@@ -241,14 +255,23 @@ export function useSupportDirectory(
       storageMessage: 'Saving contacts on this device…',
     }));
     try {
-      const saved = await coordinator.saveManual(response, dependencies.saveCache);
+      const saved = await coordinator.saveManual(
+        authority,
+        responseRevision,
+        response,
+        dependencies.stageCache,
+        dependencies.commitCache,
+      );
       if (!mountedRef.current) return;
-      if (!saved) return;
-      setState((current) => ({
+      setState((current) => saved ? ({
         ...current,
         savedOffline: true,
         savingOffline: false,
         storageMessage: 'Saved to this device for offline access.',
+      }) : ({
+        ...current,
+        savingOffline: false,
+        storageMessage: 'A newer directory update replaced this save. Save again if needed.',
       }));
     } catch {
       if (!mountedRef.current) return;
@@ -261,7 +284,7 @@ export function useSupportDirectory(
     } finally {
       saveInFlightRef.current = false;
     }
-  }, [coordinator, dependencies.saveCache, state.response]);
+  }, [coordinator, dependencies.commitCache, dependencies.stageCache, state.refreshing, state.response]);
 
   return { ...state, retry, saveOffline };
 }

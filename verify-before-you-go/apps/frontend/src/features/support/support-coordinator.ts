@@ -1,8 +1,14 @@
 import type { SupportDirectoryResponse } from '@vbyg/contracts';
 
+import type { StagedSupportDirectoryCache } from './support-cache';
+
 export type SupportRequestAuthority = number;
 
-type CacheWriter = (data: SupportDirectoryResponse) => Promise<void>;
+type CacheStager = (data: SupportDirectoryResponse) => Promise<StagedSupportDirectoryCache>;
+type CacheCommitter = (
+  candidate: StagedSupportDirectoryCache,
+  isAuthoritative: () => boolean,
+) => Promise<boolean>;
 
 export class SupportDirectoryCoordinator {
   private requestGeneration = 0;
@@ -11,6 +17,11 @@ export class SupportDirectoryCoordinator {
 
   beginRequest(): SupportRequestAuthority {
     this.requestGeneration += 1;
+    this.mutationGeneration += 1;
+    return this.requestGeneration;
+  }
+
+  currentRequestAuthority(): SupportRequestAuthority {
     return this.requestGeneration;
   }
 
@@ -19,46 +30,55 @@ export class SupportDirectoryCoordinator {
   }
 
   revokeRequest(authority: SupportRequestAuthority): void {
-    if (this.isRequestAuthoritative(authority)) this.requestGeneration += 1;
+    if (this.isRequestAuthoritative(authority)) {
+      this.requestGeneration += 1;
+      this.mutationGeneration += 1;
+    }
   }
 
   async saveForRequest(
     authority: SupportRequestAuthority,
     data: SupportDirectoryResponse,
-    writer: CacheWriter,
+    stage: CacheStager,
+    commit: CacheCommitter,
   ): Promise<boolean> {
     if (!this.isRequestAuthoritative(authority)) return false;
     const mutation = this.claimMutation();
+    const candidate = await stage(data);
     return this.enqueueMutation(async () => {
       if (!this.isRequestAuthoritative(authority) || mutation !== this.mutationGeneration) {
         return false;
       }
-      try {
-        await writer(data);
-      } catch (error) {
-        if (!this.isRequestAuthoritative(authority) || mutation !== this.mutationGeneration) {
-          return false;
-        }
-        throw error;
-      }
-      return this.isRequestAuthoritative(authority) && mutation === this.mutationGeneration;
+      return commit(
+        candidate,
+        () => this.isRequestAuthoritative(authority) && mutation === this.mutationGeneration,
+      );
     });
   }
 
   async saveManual(
+    authority: SupportRequestAuthority,
+    responseRevision: string,
     data: SupportDirectoryResponse,
-    writer: CacheWriter,
+    stage: CacheStager,
+    commit: CacheCommitter,
   ): Promise<boolean> {
+    if (
+      !this.isRequestAuthoritative(authority)
+      || data.fetchedAt !== responseRevision
+    ) return false;
     const mutation = this.claimMutation();
+    const candidate = await stage(data);
     return this.enqueueMutation(async () => {
-      if (mutation !== this.mutationGeneration) return false;
-      try {
-        await writer(data);
-      } catch (error) {
-        if (mutation !== this.mutationGeneration) return false;
-        throw error;
-      }
-      return mutation === this.mutationGeneration;
+      if (
+        !this.isRequestAuthoritative(authority)
+        || mutation !== this.mutationGeneration
+        || candidate.responseRevision !== responseRevision
+      ) return false;
+      return commit(
+        candidate,
+        () => this.isRequestAuthoritative(authority) && mutation === this.mutationGeneration,
+      );
     });
   }
 

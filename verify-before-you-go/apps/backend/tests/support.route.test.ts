@@ -79,6 +79,18 @@ test('support route returns exact emergency actions and never exposes retired co
   await app.close();
 });
 
+test('embassy switchboard uses neutral source-supported wording', async () => {
+  const app = await buildSupportTestApp();
+  const response = await app.inject({ method: 'GET', url: '/api/v1/support-contacts?country=cambodia' });
+  const payload = SupportDirectoryResponseSchema.parse(response.json());
+  const embassy = payload.contacts.find((contact) => contact.id === 'support-cambodia-vietnam-embassy');
+  assert.equal(embassy?.title, 'Vietnamese Embassy switchboard');
+  assert.equal(embassy?.description, 'General contact number listed by the Embassy of Viet Nam in Cambodia.');
+  assert.equal(embassy?.actionLabel, 'Call the embassy');
+  assert.doesNotMatch(`${embassy?.title} ${embassy?.description}`, /citizen-protection contact/i);
+  await app.close();
+});
+
 test('GET /api/v1/support-contacts filters one allowlisted country and rejects unknown parameters', async () => {
   const app = await buildSupportTestApp();
   const filtered = await app.inject({ method: 'GET', url: '/api/v1/support-contacts?country=vietnam' });

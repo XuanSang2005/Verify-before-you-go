@@ -53,3 +53,12 @@ test('bundle excludes dead CTAs and does not disguise unknown availability as la
   assert.ok(bundledSupportDirectory.response.contacts.every((contact) =>
     contact.languageStatus === 'confirmed' || contact.languages.length === 0));
 });
+
+test('bundled embassy switchboard uses neutral source-supported wording', () => {
+  const embassy = bundledSupportDirectory.response.contacts.find(
+    (contact) => contact.id === 'support-cambodia-vietnam-embassy',
+  );
+  assert.equal(embassy?.title, 'Vietnamese Embassy switchboard');
+  assert.equal(embassy?.description, 'General contact number listed by the Embassy of Viet Nam in Cambodia.');
+  assert.equal(embassy?.actionLabel, 'Call the embassy');
+});

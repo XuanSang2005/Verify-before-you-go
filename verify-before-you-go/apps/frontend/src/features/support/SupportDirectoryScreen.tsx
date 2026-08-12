@@ -103,6 +103,7 @@ export function SupportDirectoryScreen({
   const organizations = contacts.filter((contact) => contact.kind === 'organization');
   const hasResponse = Boolean(directory.response);
   const bundledAvailable = directory.fallbackKind === 'bundle';
+  const saveUnavailable = Boolean(directory.savingOffline || directory.refreshing);
 
   const openUri = async (contact: SupportContact) => {
     setActionMessage(undefined);
@@ -273,12 +274,14 @@ export function SupportDirectoryScreen({
               <InteractiveSurface
                 accessibilityLabel={directory.savingOffline
                   ? 'Saving contacts offline'
+                  : directory.refreshing
+                    ? 'Save contacts offline after refresh finishes'
                   : directory.savedOffline
                     ? 'Save contacts offline again'
                     : 'Save contacts offline'}
                 accessibilityRole="button"
-                accessibilityState={{ disabled: Boolean(directory.savingOffline) }}
-                disabled={Boolean(directory.savingOffline)}
+                accessibilityState={{ disabled: saveUnavailable }}
+                disabled={saveUnavailable}
                 disabledStyle={styles.controlDisabled}
                 focusStyle={styles.saveButtonFocused}
                 hoverStyle={styles.saveButtonHovered}
