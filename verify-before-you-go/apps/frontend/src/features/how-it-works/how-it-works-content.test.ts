@@ -17,12 +17,15 @@ test('CP15 covers analysis, no-verdict language and independent verification in 
 test('CP15 truthfully distinguishes local data from deliberate backend actions', () => {
   assert.deepEqual(deviceAndServerFacts.map((fact) => fact.id), ['device', 'server']);
   const copy = JSON.stringify(deviceAndServerFacts);
-  assert.match(copy, /selected report evidence/u);
+  assert.match(copy, /Evidence images stay on this device and are not uploaded/u);
   assert.match(copy, /secure device storage/u);
-  assert.match(copy, /web asks you to save or re-enter the one-time key/u);
-  assert.match(copy, /transient analysis/u);
-  assert.match(copy, /screenshot is not uploaded or read/u);
-  assert.match(copy, /Local evidence files are not included/u);
+  assert.match(copy, /native saves the recovery key automatically/u);
+  assert.match(copy, /Web does not save it automatically; copy or download it, or enter it again later/u);
+  assert.match(copy, /full identifier, factual description, selected behaviours, privacy choices and redacted preview/u);
+  assert.match(copy, /server encrypts the private identifier and description/u);
+  assert.match(copy, /public redacted derivative is stored only when you enable the corresponding permission/u);
+  assert.match(copy, /screenshot pixels are not uploaded, read by OCR or analysed/u);
+  assert.match(copy, /API receives only screenshotProvided/u);
 });
 
 test('CP15 reuses the exact first illustration bytes embedded in Original HTML Screen 01', () => {
@@ -45,6 +48,7 @@ test('How It Works is a hidden route inside the approved five-tab shell, not an 
   const screenSource = readFileSync(new URL('./HowItWorksScreen.tsx', import.meta.url), 'utf8');
 
   assert.match(layoutSource, /primaryTabRouteNames = \['index', 'check', 'news', 'quiz', 'help'\]/u);
+  assert.match(layoutSource, /routeName === 'index' \|\| routeName === 'how-it-works'/u);
   assert.match(layoutSource, /name="how-it-works"[\s\S]*?options=\{\{ href: null \}\}/u);
   assert.doesNotMatch(layoutSource, /primaryTabRouteNames = \[[^\]]*how-it-works/u);
   assert.match(routeSource, /HowItWorksScreen/u);

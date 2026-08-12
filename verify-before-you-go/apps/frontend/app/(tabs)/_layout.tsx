@@ -39,10 +39,17 @@ const tabIcons: Record<string, IconName> = {
 };
 
 export const primaryTabRouteNames = ['index', 'check', 'news', 'quiz', 'help'] as const;
+const primaryTabHrefs = {
+  index: '/',
+  check: '/check',
+  news: '/news',
+  quiz: '/quiz',
+  help: '/help',
+} as const;
 
 export function getPrimaryTabRouteName(routeName: string | undefined) {
   if (!routeName) return undefined;
-  if (routeName === 'index') return 'index';
+  if (routeName === 'index' || routeName === 'how-it-works') return 'index';
   return primaryTabRouteNames.find((name) => name !== 'index' && (
     routeName === name || routeName.startsWith(`${name}/`)
   ));
@@ -119,7 +126,8 @@ export function FloatingTabBar({ descriptors, navigation, state }: FloatingTabBa
   const { width } = useWindowDimensions();
   const keyboardVisible = useKeyboardVisibility();
   const reduceMotionEnabled = useReduceMotionPreference();
-  const activeRouteName = getPrimaryTabRouteName(state.routes[state.index]?.name);
+  const currentRouteName = state.routes[state.index]?.name;
+  const activeRouteName = getPrimaryTabRouteName(currentRouteName);
   const visibleRoutes = primaryTabRouteNames.flatMap((routeName) => {
     const route = state.routes.find((candidate) => candidate.name === routeName);
     return route ? [route] : [];
@@ -146,6 +154,7 @@ export function FloatingTabBar({ descriptors, navigation, state }: FloatingTabBa
           const options = descriptors[route.key]?.options;
           const icon = tabIcons[route.name] ?? 'ellipse-outline';
           const accessibilityLabel = options?.tabBarAccessibilityLabel ?? options?.title ?? route.name;
+          const isHowItWorksHomeParent = currentRouteName === 'how-it-works' && route.name === 'index';
 
           const navigate = () => {
             const event = navigation.emit({
@@ -153,7 +162,9 @@ export function FloatingTabBar({ descriptors, navigation, state }: FloatingTabBa
               target: route.key,
               canPreventDefault: true,
             });
-            if (!focused && !event.defaultPrevented) navigation.navigate(route.name, route.params);
+            if ((!focused || isHowItWorksHomeParent) && !event.defaultPrevented) {
+              navigation.navigate(route.name, route.params);
+            }
           };
 
           return (
@@ -161,6 +172,7 @@ export function FloatingTabBar({ descriptors, navigation, state }: FloatingTabBa
               accessibilityLabel={accessibilityLabel}
               disabled={keyboardVisible}
               focused={focused}
+              href={primaryTabHrefs[route.name as keyof typeof primaryTabHrefs]}
               icon={icon}
               key={route.key}
               onLongPress={() => navigation.emit({ type: 'tabLongPress', target: route.key })}
@@ -179,6 +191,7 @@ function FloatingTabItem({
   accessibilityLabel,
   disabled,
   focused,
+  href,
   icon,
   onLongPress,
   onPress,
@@ -188,6 +201,7 @@ function FloatingTabItem({
   accessibilityLabel: string;
   disabled: boolean;
   focused: boolean;
+  href: string;
   icon: IconName;
   onLongPress: () => void;
   onPress: () => void;
@@ -228,9 +242,11 @@ function FloatingTabItem({
           scaleX: activeProgress.interpolate({ inputRange: [0, 1], outputRange: [0.45, 1] }),
         }],
       };
+  const webHrefProps = Platform.OS === 'web' ? { href } : {};
 
   return (
     <InteractiveSurface
+      {...webHrefProps}
       aria-selected={focused}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="tab"

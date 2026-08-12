@@ -3,6 +3,7 @@ import { act, cloneElement, isValidElement, type ReactElement, type ReactNode } 
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
+import { FloatingTabBar } from '../../../app/(tabs)/_layout';
 import { HowItWorksScreen } from './HowItWorksScreen';
 
 vi.mock('expo-router', () => ({
@@ -12,6 +13,10 @@ vi.mock('expo-router', () => ({
     }
     return <a href={href}>{children}</a>;
   },
+  Tabs: Object.assign(
+    function MockTabs({ children }: { children?: ReactNode }) { return children ?? null; },
+    { Screen: function MockTabsScreen() { return null; } },
+  ),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -24,11 +29,19 @@ vi.mock('expo-status-bar', () => ({
 
 vi.mock('react-native-safe-area-context', () => ({
   SafeAreaView: function MockSafeAreaView({ children }: { children?: ReactNode }) { return children ?? null; },
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 async function renderAtWidth(width: number) {
+  return renderNodeAtWidth(
+    <HowItWorksScreen illustrationSource={{ uri: 'screen-01-illustration.jpg' }} />,
+    width,
+  );
+}
+
+async function renderNodeAtWidth(node: ReactNode, width: number) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
   window.dispatchEvent(new Event('resize'));
   const container = document.createElement('div');
@@ -36,9 +49,46 @@ async function renderAtWidth(width: number) {
   document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
-    root.render(<HowItWorksScreen illustrationSource={{ uri: 'screen-01-illustration.jpg' }} />);
+    root.render(node);
   });
   return { container, root };
+}
+
+function createHowItWorksTabBarProps() {
+  const routes = [
+    { key: 'home-key', name: 'index', params: undefined },
+    { key: 'check-key', name: 'check', params: undefined },
+    { key: 'news-key', name: 'news', params: undefined },
+    { key: 'quiz-key', name: 'quiz', params: undefined },
+    { key: 'help-key', name: 'help', params: undefined },
+    { key: 'how-key', name: 'how-it-works', params: undefined },
+  ];
+  const navigation = {
+    emit: vi.fn(() => ({ defaultPrevented: false })),
+    navigate: vi.fn(),
+  };
+  return {
+    navigation,
+    props: {
+      descriptors: Object.fromEntries(routes.map((route) => [route.key, {
+        options: {
+          tabBarAccessibilityLabel: route.name === 'index'
+            ? 'Home'
+            : `${route.name[0]?.toUpperCase()}${route.name.slice(1)}`,
+        },
+      }])),
+      navigation,
+      state: {
+        history: [],
+        index: 5,
+        key: 'tabs-key',
+        routeNames: routes.map((route) => route.name),
+        routes,
+        stale: false,
+        type: 'tab',
+      },
+    },
+  };
 }
 
 async function cleanup(container: HTMLElement, root: Root) {
@@ -97,7 +147,28 @@ it('keeps the exact Screen 01 illustration decorative and reads privacy copy onc
   expect(image?.getAttribute('alt') ?? '').toBe('');
 
   const text = harness.container.textContent ?? '';
-  expect(text.match(/The selected checker screenshot is not uploaded or read\./gu)).toHaveLength(1);
+  expect(text.match(/screenshot pixels are not uploaded, read by OCR or analysed; the API receives only screenshotProvided\./gu)).toHaveLength(1);
   expect(text.match(/Nothing is published automatically\./gu)).toHaveLength(1);
+  await cleanup(harness.container, harness.root);
+});
+
+it('keeps exactly one Home parent selected and Home remains a real route from How It Works', async () => {
+  const fixture = createHowItWorksTabBarProps();
+  const harness = await renderNodeAtWidth(
+    <FloatingTabBar {...fixture.props as unknown as Parameters<typeof FloatingTabBar>[0]} />,
+    390,
+  );
+  const tabs = [...harness.container.querySelectorAll<HTMLElement>('[role="tab"]')];
+  const selectedTabs = tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true');
+
+  expect(tabs).toHaveLength(5);
+  expect(selectedTabs).toHaveLength(1);
+  expect(selectedTabs[0]?.getAttribute('aria-label')).toBe('Home');
+  const home = harness.container.querySelector<HTMLAnchorElement>('[data-testid="floating-tab-index"]');
+  expect(home?.tagName).toBe('A');
+  expect(home?.getAttribute('href')).toBe('/');
+
+  await act(async () => home?.click());
+  expect(fixture.navigation.navigate).toHaveBeenCalledWith('index', undefined);
   await cleanup(harness.container, harness.root);
 });

@@ -27,15 +27,15 @@ export const deviceAndServerFacts = [
     id: 'device',
     title: 'On this device',
     icon: 'phone-portrait-outline' as const,
-    body: 'Checklist and quiz progress, report drafts, selected report evidence and saved public copies remain in local device or browser storage.',
-    note: 'Recovery keys are retained only after you choose. Native uses secure device storage; web asks you to save or re-enter the one-time key.',
+    body: 'Evidence images stay on this device and are not uploaded. Checklist and quiz progress, report drafts and saved public copies also use local device or browser storage.',
+    note: 'After a successful submission, native saves the recovery key automatically in secure device storage. Web does not save it automatically; copy or download it, or enter it again later.',
   },
   {
     id: 'server',
     title: 'Sent when you choose',
     icon: 'swap-horizontal-outline' as const,
-    body: 'Running a check sends submitted text and URL text to the backend for transient analysis. The selected checker screenshot is not uploaded or read.',
-    note: 'Submitting a report sends the reviewed structured report, privacy choices and redacted preview. Local evidence files are not included in the current submission.',
+    body: 'A private report sends the full identifier, factual description, selected behaviours, privacy choices and redacted preview to the backend. The server encrypts the private identifier and description.',
+    note: 'A public redacted derivative is stored only when you enable the corresponding permission. In the checker, screenshot pixels are not uploaded, read by OCR or analysed; the API receives only screenshotProvided.',
   },
 ] as const;
 
