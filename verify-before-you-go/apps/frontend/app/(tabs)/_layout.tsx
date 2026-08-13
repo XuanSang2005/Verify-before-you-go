@@ -140,7 +140,9 @@ export function FloatingTabBar({ descriptors, navigation, state }: FloatingTabBa
   const dockBottomStyle = Platform.OS === 'web'
     ? ({ bottom: floatingTabBarContract.webBottom } as unknown as ViewStyle)
     : { bottom: getNativeFloatingTabBarBottom(insets.bottom) };
-
+  const dockHorizontalPadding = Platform.OS === 'web'
+    ? 40
+    : getFloatingTabBarHorizontalPadding(width);
   return (
     <View
       accessibilityElementsHidden={keyboardVisible}
@@ -149,7 +151,7 @@ export function FloatingTabBar({ descriptors, navigation, state }: FloatingTabBa
         styles.dock,
         webDockGestureLock,
         dockBottomStyle,
-        { paddingHorizontal: getFloatingTabBarHorizontalPadding(width) },
+        { paddingHorizontal: dockHorizontalPadding },
         keyboardVisible ? styles.dockKeyboardHidden : styles.dockInteractive,
       ]}
     >

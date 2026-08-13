@@ -1,4 +1,5 @@
 import { Stack } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -20,6 +21,7 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
+    ...Ionicons.font,
     Archivo: require('../assets/fonts/Archivo-Variable.ttf'),
     'BeVietnamPro-Regular': require('../assets/fonts/BeVietnamPro-Regular.ttf'),
     'BeVietnamPro-Medium': require('../assets/fonts/BeVietnamPro-Medium.ttf'),
