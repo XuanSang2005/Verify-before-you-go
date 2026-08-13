@@ -9,6 +9,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { colors } from '@/theme';
 import { OfferDraftProvider } from '@/features/offer-intake/OfferDraftContext';
+import { StartupOnboardingGate } from '@/features/onboarding/StartupOnboardingGate';
 import { ReportDraftProvider } from '@/features/reports/ReportDraftContext';
 import { ReportSubmissionProvider } from '@/features/reports/ReportSubmissionContext';
 import { RewardProvider } from '@/features/rewards/RewardContext';
@@ -36,24 +37,26 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider style={styles.root}>
-      <OfferDraftProvider>
-        <ReportDraftProvider>
-          <RewardProvider>
-            <ReportSubmissionProvider>
-              <StatusBar style="dark" />
-              <Stack
-                screenOptions={{
-                  animation: 'fade',
-                  contentStyle: { backgroundColor: colors.canvas },
-                  headerShown: false,
-                }}
-              >
-                <Stack.Screen name="(tabs)" />
-              </Stack>
-            </ReportSubmissionProvider>
-          </RewardProvider>
-        </ReportDraftProvider>
-      </OfferDraftProvider>
+      <StartupOnboardingGate>
+        <OfferDraftProvider>
+          <ReportDraftProvider>
+            <RewardProvider>
+              <ReportSubmissionProvider>
+                <StatusBar style="dark" />
+                <Stack
+                  screenOptions={{
+                    animation: 'fade',
+                    contentStyle: { backgroundColor: colors.canvas },
+                    headerShown: false,
+                  }}
+                >
+                  <Stack.Screen name="(tabs)" />
+                </Stack>
+              </ReportSubmissionProvider>
+            </RewardProvider>
+          </ReportDraftProvider>
+        </OfferDraftProvider>
+      </StartupOnboardingGate>
     </SafeAreaProvider>
   );
 }

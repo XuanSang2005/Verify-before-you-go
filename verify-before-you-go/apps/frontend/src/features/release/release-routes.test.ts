@@ -52,7 +52,8 @@ test('CP16 preserves subordinate static routes and the canonical launch route', 
 
   const rootLayout = readFileSync(new URL('app/_layout.tsx', frontendRoot), 'utf8');
   assert.match(rootLayout, /initialRouteName: '\(tabs\)'/u);
-  assert.doesNotMatch(rootLayout, /onboarding|onboardingComplete/u);
+  assert.match(rootLayout, /StartupOnboardingGate/u);
+  assert.doesNotMatch(rootLayout, /onboardingComplete|AsyncStorage|SecureStore/u);
 });
 
 test('CP16 keeps exactly five canonical tabs and every major workflow on the Homepage', () => {
