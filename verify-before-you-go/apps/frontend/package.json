@@ -53,6 +53,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "export:web": "expo export -p web --clear",
+    "test:release-runtime": "node --import tsx --test src/features/release/release-runtime.ts && vitest run --config vitest.runtime.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint --max-warnings=0",
     "test": "node --import tsx --test \"src/**/*.test.ts\" && vitest run --config vitest.config.ts"
