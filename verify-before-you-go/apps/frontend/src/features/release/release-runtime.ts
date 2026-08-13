@@ -69,22 +69,32 @@ test('CP16 static preview serves route-specific SSR bodies without fallback outp
   }
 });
 
-test('CP16 exported API authorizes every requested static-preview origin', async () => {
+test('CP16 exported API authorizes preflight and GET for every requested static-preview origin', async () => {
   const previewOrigins = new Set(['http://localhost:8082', staticOrigin]);
   if (lanOrigin) {
     previewOrigins.add(lanOrigin);
   }
 
   for (const origin of previewOrigins) {
-    const response = await runtimeFetch(`${expectedApiBaseUrl}/news`, {
+    const preflightResponse = await runtimeFetch(`${expectedApiBaseUrl}/news`, {
       method: 'OPTIONS',
       headers: {
         origin,
         'access-control-request-method': 'GET',
       },
     });
-    assert.equal(response.status, 204, `${origin} preflight returned ${response.status}`);
-    assert.equal(response.headers.get('access-control-allow-origin'), origin);
+    assert.equal(preflightResponse.status, 204, `${origin} preflight returned ${preflightResponse.status}`);
+    assert.equal(preflightResponse.headers.get('access-control-allow-origin'), origin);
+    const allowedMethods = (preflightResponse.headers.get('access-control-allow-methods') ?? '')
+      .split(',')
+      .map((method) => method.trim().toUpperCase());
+    assert.equal(allowedMethods.includes('GET'), true, `${origin} preflight did not allow GET`);
+
+    const getResponse = await runtimeFetch(`${expectedApiBaseUrl}/news`, {
+      headers: { origin },
+    });
+    assert.equal(getResponse.status, 200, `${origin} GET returned ${getResponse.status}`);
+    assert.equal(getResponse.headers.get('access-control-allow-origin'), origin);
   }
 });
 

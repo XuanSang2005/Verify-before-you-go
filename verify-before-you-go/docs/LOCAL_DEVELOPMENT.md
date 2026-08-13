@@ -9,13 +9,19 @@
 
 ## First run
 
-From the repository root:
+The Git checkout contains the npm application workspace in `verify-before-you-go/`. From the Git root, enter that workspace first:
 
 ```bash
+cd verify-before-you-go
 cp apps/backend/.env.example apps/backend/.env
 cp apps/frontend/.env.example apps/frontend/.env
-docker compose up -d
+```
+
+Immediately after creating `apps/backend/.env`, generate a unique secret with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'`, replace the example `REPORT_SECURITY_SECRET`, and retain that value across restarts. Do not regenerate it during an ordinary release check because doing so invalidates existing encrypted local data and signed links. Then continue:
+
+```bash
 npm install
+docker compose up -d --wait
 npm run db:migrate
 npm run db:seed
 npm run dev
@@ -137,10 +143,14 @@ Open `/how-it-works` for the optional evidence-first guide. It is never an onboa
 
 ## CP16 local release check
 
-Use the Node version in `.nvmrc` (Node 24), and complete **First run** above on a fresh checkout. Before a release check, make sure PostgreSQL is running and reconcile the current schema and deterministic seed data:
+Use the Node version in `.nvmrc` (Node 24). This release bootstrap is standalone: do not run `npm run dev` first. If a development process is already running, stop it with Ctrl+C in its terminal before starting the release backend below.
+
+From the Git root, enter the npm workspace. On a fresh checkout, install dependencies and create the two `.env` files as described in **First run**, including one newly generated, stable `REPORT_SECURITY_SECRET`. Do not overwrite an existing backend `.env` or regenerate its secret for subsequent audits. Then start PostgreSQL, wait until it is ready, and reconcile the current schema and deterministic seed data:
 
 ```bash
-docker compose up -d
+cd verify-before-you-go
+npm install
+docker compose up -d --wait
 npm run db:migrate
 npm run db:seed
 ```
@@ -195,6 +205,6 @@ CP16_LAN_ORIGIN=http://<LAN-IP>:8082 \
 npm run test:release-runtime --workspace @vbyg/frontend
 ```
 
-The runtime command checks route-specific HTML through `CP16_STATIC_ORIGIN`, CORS against the API URL actually embedded in the export, the exact set of absolute API origins in the bundle, and a rendered API-backed Newsroom reaching its ready state with real backend stories. Using the LAN static origin therefore verifies that the preview itself—not only the API—is reachable over the phone-accessible address.
+The runtime command checks route-specific HTML through `CP16_STATIC_ORIGIN`, preflight plus an actual cross-origin GET against the API URL embedded in the export, the exact set of absolute API origins in the bundle, and a rendered API-backed Newsroom reaching its ready state with real backend stories. Using the LAN static origin is a host-side LAN smoke check; it does not prove physical-device access by itself. For the phone audit, manually open `http://<LAN-IP>:8082/news` on the device, confirm the stories replace Loading, and confirm navigation remains usable.
 
 Always export again after changing any `EXPO_PUBLIC_*` value or after the LAN IP changes. Restart the backend whenever `CORS_ORIGINS` changes. Internal navigation and direct refresh are supported for all canonical routes. Known static parameters are generated for newsroom stories, reviewed alert IDs and analysis finding IDs. Transient checker results, private report drafts and one-time receipt state intentionally require their originating session and show an honest recovery state after a direct refresh.
