@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -184,7 +184,11 @@ export function ChecklistScreen() {
   };
 
   return (
-    <PrototypeTabScreen contentStyle={styles.screenContent} testID="verification-checklist">
+    <PrototypeTabScreen
+      contentStyle={styles.screenContent}
+      scrollToEndKey={complete ? 'complete' : undefined}
+      testID="verification-checklist"
+    >
       <StatusBar style="dark" />
 
       <View style={styles.backRow}>
@@ -312,6 +316,23 @@ export function ChecklistScreen() {
         <View style={styles.competencyChip}><View style={styles.competencyMark} /><Text style={styles.competencyText}>Act</Text></View>
         <Text style={styles.actText}>Choosing a next step you control.</Text>
       </View>
+
+      {complete ? (
+        <Link asChild href="/learn/scenario">
+          <InteractiveSurface
+            accessibilityLabel="Continue to scenario practice"
+            accessibilityRole="link"
+            focusStyle={styles.continueFocused}
+            hoverStyle={styles.continueHovered}
+            pressedStyle={styles.pressed}
+            style={styles.continueButton}
+            testID="checklist-continue"
+          >
+            <Text style={styles.continueText}>Continue to scenario practice</Text>
+            <Ionicons color={colors.paper} name="arrow-forward" size={18} />
+          </InteractiveSurface>
+        </Link>
+      ) : null}
 
       <InteractiveSurface
         accessibilityLabel="Reset checklist"
@@ -475,6 +496,10 @@ const styles = StyleSheet.create({
   competencyMark: { width: 6, height: 6, borderRadius: 1, backgroundColor: colors.amber },
   competencyText: { color: colors.blue, fontFamily: typography.bodySemiBold, fontSize: 13, lineHeight: 19 },
   actText: { minWidth: 0, flexShrink: 1, color: colors.muted, fontFamily: typography.body, fontSize: 13, lineHeight: 19 },
+  continueButton: { minWidth: 0, width: '100%', minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 18, borderWidth: 2, borderColor: colors.brightBlue, borderRadius: 999, backgroundColor: colors.brightBlue },
+  continueText: { minWidth: 0, flexShrink: 1, color: colors.paper, fontFamily: typography.bodySemiBold, fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  continueHovered: { borderColor: colors.blue, backgroundColor: colors.blue },
+  continueFocused: { borderColor: colors.focus },
   resetButton: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 18, borderWidth: 1, borderColor: colors.line, borderRadius: 999, backgroundColor: colors.paper },
   resetText: { color: colors.blue, fontFamily: typography.bodySemiBold, fontSize: 14, lineHeight: 20 },
   resetDisabled: { opacity: 0.45 },

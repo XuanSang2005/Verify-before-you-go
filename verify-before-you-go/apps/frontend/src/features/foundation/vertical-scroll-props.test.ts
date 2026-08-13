@@ -28,14 +28,17 @@ test('web viewport locks zoom while preserving vertical scrolling', () => {
   assert.doesNotMatch(scrollPropsSource, /pinch-zoom/);
 });
 
-test('PrototypeTabScreen can reset the same cross-platform ScrollView without animation', () => {
+test('PrototypeTabScreen can move the same cross-platform ScrollView without animation', () => {
   const shellSource = readFileSync(
     new URL('../../components/prototype/PrototypeShell.tsx', import.meta.url),
     'utf8',
   );
 
   assert.match(shellSource, /scrollResetKey\?: string \| number/);
+  assert.match(shellSource, /scrollToEndKey\?: string \| number/);
   assert.match(shellSource, /ref=\{scrollViewRef\}/);
   assert.match(shellSource, /scrollViewRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/);
+  assert.match(shellSource, /scrollViewRef\.current\?\.scrollToEnd\(\{ animated: false \}\)/);
   assert.match(shellSource, /Object\.is\(previousScrollResetKeyRef\.current, scrollResetKey\)/);
+  assert.match(shellSource, /Object\.is\(previousScrollToEndKeyRef\.current, scrollToEndKey\)/);
 });

@@ -23,22 +23,31 @@ export function PrototypeTabScreen({
   overlay,
   contentStyle,
   scrollResetKey,
+  scrollToEndKey,
   testID,
 }: {
   children: ReactNode;
   overlay?: ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
   scrollResetKey?: string | number;
+  scrollToEndKey?: string | number;
   testID: string;
 }) {
   const scrollViewRef = useRef<ScrollView>(null);
   const previousScrollResetKeyRef = useRef(scrollResetKey);
+  const previousScrollToEndKeyRef = useRef(scrollToEndKey);
 
   useEffect(() => {
     if (Object.is(previousScrollResetKeyRef.current, scrollResetKey)) return;
     previousScrollResetKeyRef.current = scrollResetKey;
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
   }, [scrollResetKey]);
+
+  useEffect(() => {
+    if (scrollToEndKey === undefined || Object.is(previousScrollToEndKeyRef.current, scrollToEndKey)) return;
+    previousScrollToEndKeyRef.current = scrollToEndKey;
+    scrollViewRef.current?.scrollToEnd({ animated: false });
+  }, [scrollToEndKey]);
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea} testID={testID}>

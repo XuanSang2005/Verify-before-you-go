@@ -69,6 +69,10 @@ test('checklist frames cannot exceed the 360px or 390px viewport', () => {
 test('reset, completion and storage recovery states are present without motion', () => {
   assert.match(screenSource, /requestChecklistResetConfirmation/);
   assert.match(screenSource, /All items reviewed/);
+  assert.match(screenSource, /Continue to scenario practice/);
+  assert.match(screenSource, /href="\/learn\/scenario"/);
+  assert.match(screenSource, /complete \? \(/);
+  assert.match(screenSource, /scrollToEndKey=\{complete \? 'complete' : undefined\}/);
   assert.match(screenSource, /Invalid saved checklist data was ignored/);
   assert.match(screenSource, /Retry storage/);
   assert.doesNotMatch(screenSource, /Animated\.|withTiming|spring/);
