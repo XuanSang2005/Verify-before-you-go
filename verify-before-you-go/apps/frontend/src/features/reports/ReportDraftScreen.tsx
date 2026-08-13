@@ -192,6 +192,19 @@ export function ReportDraftExperience({
         <Text style={styles.introText}>A report starts a private review. It is not a public accusation.</Text>
       </View>
 
+      <View
+        accessibilityLiveRegion="polite"
+        accessibilityRole="alert"
+        style={styles.demoNotice}
+        testID="report-demo-safety-notice"
+      >
+        <Ionicons color="#7A5200" name="warning-outline" size={20} />
+        <View style={styles.warningCopy}>
+          <Text style={styles.demoNoticeTitle}>Demo only</Text>
+          <Text style={styles.demoNoticeText}>Use fictional information. Do not enter real personal data or upload real identity documents.</Text>
+        </View>
+      </View>
+
       <StorageState
         loading={loading}
         onRetry={onRetryStorage}
@@ -592,6 +605,9 @@ const styles = StyleSheet.create({
   introPanel: { minWidth: 0, width: '100%', minHeight: 86, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, paddingLeft: 8, paddingRight: 14, borderWidth: 1, borderColor: '#D6E9FA', borderRadius: 12, backgroundColor: colors.ice },
   reportMascot: { width: 54, height: 70, flexShrink: 0, alignSelf: 'flex-end' },
   introText: { minWidth: 0, flex: 1, color: colors.body, fontFamily: typography.body, fontSize: 15, lineHeight: 23 },
+  demoNotice: { minWidth: 0, width: '100%', flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 11, borderWidth: 1, borderColor: '#F2D28D', borderRadius: 12, backgroundColor: colors.amberSoft },
+  demoNoticeTitle: { color: '#6F4B00', fontFamily: typography.bodySemiBold, fontSize: 13, lineHeight: 19 },
+  demoNoticeText: { color: '#6F4B00', fontFamily: typography.body, fontSize: 13, lineHeight: 19 },
   fieldSection: { minWidth: 0, width: '100%', gap: 8, padding: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.paper },
   sectionLabel: { color: colors.navy, fontFamily: typography.bodySemiBold, fontSize: 15, lineHeight: 21 },
   helperText: { color: colors.muted, fontFamily: typography.body, fontSize: 13, lineHeight: 19 },

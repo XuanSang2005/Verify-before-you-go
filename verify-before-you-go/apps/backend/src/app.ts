@@ -23,6 +23,7 @@ import {
 export interface BuildAppOptions {
   corsOrigins: string[];
   databaseCheck: DatabaseCheck;
+  clientIpProxyMode?: 'direct' | 'railway';
   logger?: FastifyServerOptions['logger'];
   alertsRepository?: AlertsRepository;
   newsRepository?: NewsRepository;
@@ -50,6 +51,11 @@ function createPrivacySafeLogger(logger: BuildAppOptions['logger']): FastifyServ
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
+  const trustProxy = options.clientIpProxyMode === 'railway'
+    // Railway is the only trusted hop. Fastify therefore uses the right-most
+    // forwarded address and cannot be redirected by client-supplied prefixes.
+    ? 1
+    : false;
   const app = Fastify({
     ajv: { customOptions: { removeAdditional: false } },
     genReqId: () => randomUUID(),
@@ -57,7 +63,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     // Credentials can arrive in arbitrary client headers. Never let a caller
     // choose the identifier Fastify copies into logs and public error bodies.
     requestIdHeader: false,
-    trustProxy: false,
+    trustProxy,
   });
   await app.register(cors, { origin: options.corsOrigins });
   await registerHealthRoute(app, options.databaseCheck);

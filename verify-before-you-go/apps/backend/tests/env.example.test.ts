@@ -12,8 +12,27 @@ test('fresh backend setup parses .env.example without private machine state', ()
 
   assert.equal(environment.PORT, 4000);
   assert.equal(environment.DATABASE_URL, 'postgresql://postgres:postgres@localhost:5433/verify_before_you_go');
-  assert.deepEqual(environment.corsOrigins, ['http://localhost:8081', 'http://localhost:19006']);
+  assert.deepEqual(environment.corsOrigins, [
+    'http://localhost:8081',
+    'http://localhost:8082',
+    'http://localhost:19006',
+  ]);
+  assert.equal(environment.CLIENT_IP_PROXY_MODE, 'direct');
   assert.ok(Buffer.from(environment.REPORT_SECURITY_SECRET, 'base64url').byteLength >= 32);
+});
+
+test('client IP proxy mode is explicit and only accepts direct or Railway', () => {
+  const base = {
+    DATABASE_URL: 'postgresql://postgres:postgres@localhost:5433/verify_before_you_go',
+    REPORT_SECURITY_SECRET: 'Y3AxMS1sb2NhbC1leGFtcGxlLXNlY3VyZS1zZWNyZXQtdmFsdWU',
+  };
+
+  assert.equal(loadEnvironment(base).CLIENT_IP_PROXY_MODE, 'direct');
+  assert.equal(
+    loadEnvironment({ ...base, CLIENT_IP_PROXY_MODE: 'railway' }).CLIENT_IP_PROXY_MODE,
+    'railway',
+  );
+  assert.throws(() => loadEnvironment({ ...base, CLIENT_IP_PROXY_MODE: 'true' }));
 });
 
 test('local runbook documents the LAN web CORS origin required by Safari', () => {

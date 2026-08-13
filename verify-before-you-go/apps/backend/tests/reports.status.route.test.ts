@@ -29,9 +29,11 @@ function createRepository(record: RecruitmentReportStatusRecord | null): Reports
 function buildStatusApp(
   repository: ReportsRepository,
   logger?: Parameters<typeof buildApp>[0]['logger'],
+  clientIpProxyMode: Parameters<typeof buildApp>[0]['clientIpProxyMode'] = 'direct',
 ) {
   return buildApp({
     corsOrigins: ['http://localhost:8081'],
+    clientIpProxyMode,
     databaseCheck: async () => true,
     logger,
     reportsRepository: repository,
@@ -162,6 +164,38 @@ test('status lookup is strict and malformed requests consume its early bounded r
   assert.equal(limited.statusCode, 429);
   assert.equal(ApiErrorSchema.parse(limited.json()).error.code, 'REPORT_STATUS_RATE_LIMITED');
   assert.equal(limited.headers['cache-control'], 'no-store');
+  await app.close();
+});
+
+test('Railway mode separates proxied status clients and ignores spoofed prefixes', async () => {
+  const app = await buildStatusApp(createRepository(null), undefined, 'railway');
+  for (let index = 0; index < 6; index += 1) {
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/api/v1/reports/status',
+      remoteAddress: '10.0.0.8',
+      headers: { 'x-forwarded-for': `203.0.113.${index + 1}, 198.51.100.20` },
+      payload: { reportId: `not-valid-${index}`, recoveryKey },
+    });
+    assert.equal(malformed.statusCode, 400);
+  }
+  const clientALimited = await app.inject({
+    method: 'POST',
+    url: '/api/v1/reports/status',
+    remoteAddress: '10.0.0.8',
+    headers: { 'x-forwarded-for': '203.0.113.250, 198.51.100.20' },
+    payload: { reportId, recoveryKey },
+  });
+  const clientBAllowed = await app.inject({
+    method: 'POST',
+    url: '/api/v1/reports/status',
+    remoteAddress: '10.0.0.8',
+    headers: { 'x-forwarded-for': '203.0.113.250, 198.51.100.21' },
+    payload: { reportId: 'not-valid-client-b', recoveryKey },
+  });
+
+  assert.equal(clientALimited.statusCode, 429);
+  assert.equal(clientBAllowed.statusCode, 400);
   await app.close();
 });
 

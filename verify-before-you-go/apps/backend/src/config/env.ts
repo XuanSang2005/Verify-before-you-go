@@ -5,6 +5,7 @@ const EnvironmentSchema = z.object({
   PORT: z.coerce.number().int().positive().max(65535).default(4000),
   DATABASE_URL: z.url(),
   CORS_ORIGINS: z.string().default('http://localhost:8081,http://localhost:19006'),
+  CLIENT_IP_PROXY_MODE: z.enum(['direct', 'railway']).default('direct'),
   REPORT_SECURITY_SECRET: z.string()
     .regex(/^[A-Za-z0-9_-]{43,}$/u, 'REPORT_SECURITY_SECRET must be base64url encoded.')
     .refine((value) => Buffer.from(value, 'base64url').byteLength >= 32, 'REPORT_SECURITY_SECRET must contain at least 256 bits.'),

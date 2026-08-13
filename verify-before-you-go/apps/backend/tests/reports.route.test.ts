@@ -62,9 +62,14 @@ function createRouteRepository() {
   return { cleanupCutoffs, created, repository };
 }
 
-function buildReportsTestApp(repository: ReportsRepository, logger?: Parameters<typeof buildApp>[0]['logger']) {
+function buildReportsTestApp(
+  repository: ReportsRepository,
+  logger?: Parameters<typeof buildApp>[0]['logger'],
+  clientIpProxyMode: Parameters<typeof buildApp>[0]['clientIpProxyMode'] = 'direct',
+) {
   return buildApp({
     corsOrigins: ['http://localhost:8081'],
+    clientIpProxyMode,
     databaseCheck: async () => true,
     logger,
     reportsRepository: repository,
@@ -203,6 +208,80 @@ test('malformed requests consume the same bounded report-submission rate limit',
   assert.equal(limited.statusCode, 429);
   assert.equal(ApiErrorSchema.parse(limited.json()).error.code, 'REPORT_RATE_LIMITED');
   assert.equal(limited.headers['cache-control'], 'no-store');
+  await app.close();
+});
+
+test('direct mode ignores spoofed forwarded addresses for report rate limiting', async () => {
+  const { repository } = createRouteRepository();
+  const app = await buildReportsTestApp(repository);
+  for (let index = 0; index < 10; index += 1) {
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/api/v1/reports',
+      remoteAddress: '127.0.0.42',
+      headers: {
+        'idempotency-key': `direct_spoof_key_${String(index).padStart(4, '0')}`,
+        'x-forwarded-for': `198.51.100.${index + 1}`,
+      },
+      payload: { privateBody: `not-valid-${index}` },
+    });
+    assert.equal(malformed.statusCode, 400);
+  }
+  const limited = await app.inject({
+    method: 'POST',
+    url: '/api/v1/reports',
+    remoteAddress: '127.0.0.42',
+    headers: {
+      'idempotency-key': 'direct_spoof_key_valid_9999',
+      'x-forwarded-for': '203.0.113.250',
+    },
+    payload: request,
+  });
+
+  assert.equal(limited.statusCode, 429);
+  assert.equal(ApiErrorSchema.parse(limited.json()).error.code, 'REPORT_RATE_LIMITED');
+  await app.close();
+});
+
+test('Railway mode separates proxied report clients and ignores spoofed prefixes', async () => {
+  const { repository } = createRouteRepository();
+  const app = await buildReportsTestApp(repository, undefined, 'railway');
+  for (let index = 0; index < 10; index += 1) {
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/api/v1/reports',
+      remoteAddress: '10.0.0.8',
+      headers: {
+        'idempotency-key': `railway_client_a_${String(index).padStart(4, '0')}`,
+        'x-forwarded-for': `203.0.113.${index + 1}, 198.51.100.10`,
+      },
+      payload: { privateBody: `not-valid-${index}` },
+    });
+    assert.equal(malformed.statusCode, 400);
+  }
+  const clientALimited = await app.inject({
+    method: 'POST',
+    url: '/api/v1/reports',
+    remoteAddress: '10.0.0.8',
+    headers: {
+      'idempotency-key': 'railway_client_a_valid_9999',
+      'x-forwarded-for': '203.0.113.250, 198.51.100.10',
+    },
+    payload: request,
+  });
+  const clientBAllowed = await app.inject({
+    method: 'POST',
+    url: '/api/v1/reports',
+    remoteAddress: '10.0.0.8',
+    headers: {
+      'idempotency-key': 'railway_client_b_malformed_1',
+      'x-forwarded-for': '203.0.113.250, 198.51.100.11',
+    },
+    payload: { privateBody: 'not-valid' },
+  });
+
+  assert.equal(clientALimited.statusCode, 429);
+  assert.equal(clientBAllowed.statusCode, 400);
   await app.close();
 });
 

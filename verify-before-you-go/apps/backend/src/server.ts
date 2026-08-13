@@ -13,6 +13,7 @@ const environment = loadEnvironment();
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: environment.DATABASE_URL }) });
 const app = await buildApp({
   corsOrigins: environment.corsOrigins,
+  clientIpProxyMode: environment.CLIENT_IP_PROXY_MODE,
   databaseCheck: async () => {
     await prisma.$queryRaw`SELECT 1`;
     return true;

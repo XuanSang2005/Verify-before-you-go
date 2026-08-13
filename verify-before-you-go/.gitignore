@@ -12,3 +12,5 @@ apps/backend/dist/
 apps/backend/.local-storage/
 apps/backend/src/generated/
 coverage/
+.vercel/
+.env.local

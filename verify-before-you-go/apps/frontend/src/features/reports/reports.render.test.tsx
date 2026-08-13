@@ -276,6 +276,10 @@ describe('CP10 rendered report draft and privacy review', () => {
 
   it('shows anonymous, private and non-verdict safety copy without a submit control', async () => {
     const harness = await render(<DraftHarness onReview={() => undefined} initialDraft={validDraft()} />);
+    const demoNotice = control(harness.container, 'report-demo-safety-notice');
+    expect(demoNotice.getAttribute('role')).toBe('alert');
+    expect(demoNotice.textContent).toContain('Demo only');
+    expect(demoNotice.textContent).toContain('Do not enter real personal data or upload real identity documents.');
     expect(harness.container.textContent).toContain('Anonymous by default');
     expect(harness.container.textContent).toContain('not a public accusation');
     expect(harness.container.textContent).toContain('Evidence is optional—not proof by itself.');
