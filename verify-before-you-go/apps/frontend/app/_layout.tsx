@@ -32,8 +32,6 @@ export default function RootLayout() {
     if (fontsLoaded || fontError) void SplashScreen.hideAsync();
   }, [fontError, fontsLoaded]);
 
-  if (!fontsLoaded && !fontError) return null;
-
   return (
     <SafeAreaProvider style={styles.root}>
       <OfferDraftProvider>
