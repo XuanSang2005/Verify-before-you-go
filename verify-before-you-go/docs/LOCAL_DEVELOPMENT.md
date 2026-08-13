@@ -145,6 +145,8 @@ Open `/how-it-works` for the optional evidence-first guide. It is never an onboa
 
 Use the Node version in `.nvmrc` (Node 24). This release bootstrap is standalone: do not run `npm run dev` first. If a development process is already running, stop it with Ctrl+C in its terminal before starting the release backend below.
 
+Every terminal used below must start in `<git-root>/verify-before-you-go`.
+
 From the Git root, enter the npm workspace. On a fresh checkout, install dependencies and create the two `.env` files as described in **First run**, including one newly generated, stable `REPORT_SECURITY_SECRET`. Do not overwrite an existing backend `.env` or regenerate its secret for subsequent audits. Then start PostgreSQL, wait until it is ready, and reconcile the current schema and deterministic seed data:
 
 ```bash
@@ -160,7 +162,7 @@ Choose one API address before building:
 - Same-Mac review: `http://localhost:4000/api/v1`
 - Phone/LAN review: `http://<LAN-IP>:4000/api/v1`
 
-From the repository root, export that choice explicitly. Replace `<API-BASE-URL>` with exactly one of the addresses above:
+From that npm workspace, export the choice explicitly. Replace `<API-BASE-URL>` with exactly one of the addresses above:
 
 ```bash
 export EXPO_PUBLIC_API_BASE_URL=<API-BASE-URL>
