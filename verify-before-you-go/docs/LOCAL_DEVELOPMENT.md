@@ -9,7 +9,7 @@
 
 ## First run
 
-From the canonical repository root `/Users/macbookpro/UNESCO/verify-before-you-go`:
+From the repository root:
 
 ```bash
 cp apps/backend/.env.example apps/backend/.env
@@ -39,11 +39,11 @@ Set `EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:4000/api/v1`, run `npm run dev:fro
 
 ## Physical device with Expo Go
 
-The computer LAN address detected again on 13 August 2026 is `10.102.13.48`. This address can change whenever the Mac changes Wi-Fi networks or hotspots, so confirm the current address with `ipconfig getifaddr en0` (or `ifconfig en0` when needed), then set:
+The computer LAN address detected again on 13 August 2026 is `172.20.10.2`. This address can change whenever the Mac changes Wi-Fi networks or hotspots, so confirm the current address with `ipconfig getifaddr en0` (or `ifconfig en0` when needed), then set:
 
 ```text
-EXPO_PUBLIC_API_BASE_URL=http://10.102.13.48:4000/api/v1
-CORS_ORIGINS=http://localhost:8081,http://localhost:8082,http://localhost:19006,http://10.102.13.48:8081,http://10.102.13.48:8082
+EXPO_PUBLIC_API_BASE_URL=http://172.20.10.2:4000/api/v1
+CORS_ORIGINS=http://localhost:8081,http://localhost:8082,http://localhost:19006,http://172.20.10.2:8081,http://172.20.10.2:8082
 ```
 
 Set `EXPO_PUBLIC_API_BASE_URL` in `apps/frontend/.env` and add the LAN dev and static-preview origins `http://<LAN-IP>:8081` and `http://<LAN-IP>:8082` to the comma-separated `CORS_ORIGINS` value in `apps/backend/.env`. Restart both processes after either value changes. Without the LAN origins, native Expo Go requests can work while Safari opened at a LAN URL is still blocked by CORS.
@@ -137,7 +137,15 @@ Open `/how-it-works` for the optional evidence-first guide. It is never an onboa
 
 ## CP16 local release check
 
-Use the Node version in `.nvmrc` (Node 24). Choose one API address before building:
+Use the Node version in `.nvmrc` (Node 24), and complete **First run** above on a fresh checkout. Before a release check, make sure PostgreSQL is running and reconcile the current schema and deterministic seed data:
+
+```bash
+docker compose up -d
+npm run db:migrate
+npm run db:seed
+```
+
+Choose one API address before building:
 
 - Same-Mac review: `http://localhost:4000/api/v1`
 - Phone/LAN review: `http://<LAN-IP>:4000/api/v1`
@@ -157,30 +165,36 @@ CORS_ORIGINS=http://localhost:8081,http://localhost:8082,http://localhost:19006,
 Restart or start the backend in its own terminal so it reads the updated CORS allowlist:
 
 ```bash
-cd /Users/macbookpro/UNESCO/verify-before-you-go
 npm run dev:backend
 ```
 
 In a second terminal, create a clean export. `npm run export:web` clears Metro's cache so an older `EXPO_PUBLIC_*` value cannot remain in the bundle:
 
 ```bash
-cd /Users/macbookpro/UNESCO/verify-before-you-go
 EXPO_PUBLIC_API_BASE_URL=<API-BASE-URL> npm run export:web
 cd apps/frontend
 npx expo serve --port 8082
 ```
 
-With the static server still running, run the reproducible release regressions from a third terminal. `CP16_LAN_ORIGIN` must be an origin allowed by the backend; use the current LAN address when testing from a phone:
+With the static server still running, run the reproducible release regressions from a third terminal. The runner derives its CORS preflight target from the same `EXPO_PUBLIC_API_BASE_URL` embedded in the bundle; there is no separate backend URL that can accidentally test a different server.
+
+For a same-Mac review, `CP16_LAN_ORIGIN` is optional and can be omitted:
 
 ```bash
-cd /Users/macbookpro/UNESCO/verify-before-you-go
 EXPO_PUBLIC_API_BASE_URL=<API-BASE-URL> \
 CP16_STATIC_ORIGIN=http://localhost:8082 \
-CP16_API_ORIGIN=http://localhost:4000 \
+npm run test:release-runtime --workspace @vbyg/frontend
+```
+
+For a phone/LAN audit, open the preview from the phone and set `CP16_STATIC_ORIGIN` to that exact LAN origin. `CP16_LAN_ORIGIN` adds the same origin explicitly to the CORS assertions and may also name an additional LAN preview origin:
+
+```bash
+EXPO_PUBLIC_API_BASE_URL=http://<LAN-IP>:4000/api/v1 \
+CP16_STATIC_ORIGIN=http://<LAN-IP>:8082 \
 CP16_LAN_ORIGIN=http://<LAN-IP>:8082 \
 npm run test:release-runtime --workspace @vbyg/frontend
 ```
 
-The runtime command checks clean static routes, CORS for both preview origins, the exact exported API origin, and a rendered API-backed Newsroom reaching its ready state with real backend stories.
+The runtime command checks route-specific HTML through `CP16_STATIC_ORIGIN`, CORS against the API URL actually embedded in the export, the exact set of absolute API origins in the bundle, and a rendered API-backed Newsroom reaching its ready state with real backend stories. Using the LAN static origin therefore verifies that the preview itself—not only the API—is reachable over the phone-accessible address.
 
 Always export again after changing any `EXPO_PUBLIC_*` value or after the LAN IP changes. Restart the backend whenever `CORS_ORIGINS` changes. Internal navigation and direct refresh are supported for all canonical routes. Known static parameters are generated for newsroom stories, reviewed alert IDs and analysis finding IDs. Transient checker results, private report drafts and one-time receipt state intentionally require their originating session and show an honest recovery state after a direct refresh.

@@ -5,10 +5,30 @@ import test from 'node:test';
 import { fetchNewsStories } from '@/api/news';
 import { loadNewsroomState, type NewsLoaderDependencies } from '@/features/news/use-news';
 
-const staticOrigin = process.env.CP16_STATIC_ORIGIN ?? 'http://localhost:8082';
-const apiOrigin = process.env.CP16_API_ORIGIN ?? 'http://localhost:4000';
-const expectedApiBaseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:4000/api/v1').replace(/\/$/u, '');
-const lanOrigin = process.env.CP16_LAN_ORIGIN;
+function normalizeHttpOrigin(value: string, variableName: string) {
+  const url = new URL(value);
+  assert.ok(url.protocol === 'http:' || url.protocol === 'https:', `${variableName} must use HTTP or HTTPS`);
+  assert.equal(url.pathname, '/', `${variableName} must be an origin without a path`);
+  assert.equal(url.search, '', `${variableName} must not contain a query string`);
+  assert.equal(url.hash, '', `${variableName} must not contain a fragment`);
+  return url.origin;
+}
+
+function normalizeApiBaseUrl(value: string | undefined) {
+  assert.ok(value, 'EXPO_PUBLIC_API_BASE_URL is required for a reproducible release check');
+  const url = new URL(value);
+  assert.ok(url.protocol === 'http:' || url.protocol === 'https:', 'EXPO_PUBLIC_API_BASE_URL must use HTTP or HTTPS');
+  assert.equal(url.pathname.replace(/\/$/u, ''), '/api/v1', 'EXPO_PUBLIC_API_BASE_URL must end in /api/v1');
+  assert.equal(url.search, '', 'EXPO_PUBLIC_API_BASE_URL must not contain a query string');
+  assert.equal(url.hash, '', 'EXPO_PUBLIC_API_BASE_URL must not contain a fragment');
+  return `${url.origin}/api/v1`;
+}
+
+const staticOrigin = normalizeHttpOrigin(process.env.CP16_STATIC_ORIGIN ?? 'http://localhost:8082', 'CP16_STATIC_ORIGIN');
+const expectedApiBaseUrl = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL);
+const lanOrigin = process.env.CP16_LAN_ORIGIN
+  ? normalizeHttpOrigin(process.env.CP16_LAN_ORIGIN, 'CP16_LAN_ORIGIN')
+  : undefined;
 const runtimeFetch: typeof fetch = (input, init) => fetch(input, {
   ...init,
   signal: init?.signal ?? AbortSignal.timeout(5_000),
@@ -49,10 +69,14 @@ test('CP16 static preview serves route-specific SSR bodies without fallback outp
   }
 });
 
-test('CP16 backend authorizes localhost and current LAN static-preview origins', async () => {
-  assert.ok(lanOrigin, 'CP16_LAN_ORIGIN is required for the runtime CORS regression');
-  for (const origin of ['http://localhost:8082', lanOrigin]) {
-    const response = await runtimeFetch(`${apiOrigin}/api/v1/news`, {
+test('CP16 exported API authorizes every requested static-preview origin', async () => {
+  const previewOrigins = new Set(['http://localhost:8082', staticOrigin]);
+  if (lanOrigin) {
+    previewOrigins.add(lanOrigin);
+  }
+
+  for (const origin of previewOrigins) {
+    const response = await runtimeFetch(`${expectedApiBaseUrl}/news`, {
       method: 'OPTIONS',
       headers: {
         origin,
