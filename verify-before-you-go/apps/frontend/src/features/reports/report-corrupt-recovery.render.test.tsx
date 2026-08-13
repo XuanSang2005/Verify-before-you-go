@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { router } from 'expo-router';
 import { describe, expect, it, vi } from 'vitest';
 
+import { RewardProvider } from '@/features/rewards/RewardContext';
+
 import { ReportDraftProvider, useReportDraft } from './ReportDraftContext';
 import { ReportPrivacyScreen } from './ReportPrivacyScreen';
 import { ReportSubmissionProvider } from './ReportSubmissionContext';
@@ -98,9 +100,11 @@ describe('CP11 corrupt submission recovery controller', () => {
     await act(async () => {
       root.render(
         <ReportDraftProvider evidenceLifecycle={evidenceLifecycle} persistence={persistence}>
-          <ReportSubmissionProvider coordinator={coordinator}>
-            <ReportPrivacyScreen />
-          </ReportSubmissionProvider>
+          <RewardProvider>
+            <ReportSubmissionProvider coordinator={coordinator}>
+              <ReportPrivacyScreen />
+            </ReportSubmissionProvider>
+          </RewardProvider>
         </ReportDraftProvider>,
       );
       await Promise.resolve();

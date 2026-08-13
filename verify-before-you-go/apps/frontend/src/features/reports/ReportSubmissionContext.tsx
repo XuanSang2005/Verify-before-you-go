@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 import type { ReportSubmissionResponse } from '@vbyg/contracts';
 
 import { createReportSubmissionRequest } from '@/api/reports';
+import { useReward } from '@/features/rewards/RewardContext';
 
 import type { ReportDraft } from './report-model';
 import { InvalidReportSubmissionAttemptError } from './report-submission-attempt-storage';
@@ -30,6 +31,7 @@ export function ReportSubmissionProvider({
   children: ReactNode;
   coordinator?: ReportSubmissionCoordinator;
 }) {
+  const { clearEligibility, unlock } = useReward();
   const [receipt, setReceipt] = useState<ReportSubmissionResponse>();
   const [retentionNotice, setRetentionNotice] = useState<string>();
   const [submissionError, setSubmissionError] = useState<string>();
@@ -40,6 +42,7 @@ export function ReportSubmissionProvider({
   const submitDraft = useCallback(async (draft: ReportDraft) => {
     if (inFlightRef.current) return false;
     inFlightRef.current = true;
+    clearEligibility('private-report-submitted');
     setSubmissionPending(true);
     setSubmissionError(undefined);
     setSubmissionRecoveryRequired(false);
@@ -47,6 +50,7 @@ export function ReportSubmissionProvider({
       const result = await coordinator.submit(createReportSubmissionRequest(draft));
       setReceipt(result.response);
       setRetentionNotice(result.retention.message);
+      unlock('private-report-submitted');
       return true;
     } catch (error) {
       setReceipt(undefined);
@@ -63,7 +67,7 @@ export function ReportSubmissionProvider({
       inFlightRef.current = false;
       setSubmissionPending(false);
     }
-  }, [coordinator]);
+  }, [clearEligibility, coordinator, unlock]);
 
   const clearForNewReport = useCallback(async () => {
     await coordinator.clearAttempt();
@@ -71,7 +75,8 @@ export function ReportSubmissionProvider({
     setRetentionNotice(undefined);
     setSubmissionError(undefined);
     setSubmissionRecoveryRequired(false);
-  }, [coordinator]);
+    clearEligibility('private-report-submitted');
+  }, [clearEligibility, coordinator]);
 
   return (
     <ReportSubmissionContext.Provider value={{

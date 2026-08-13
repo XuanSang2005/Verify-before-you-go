@@ -11,6 +11,7 @@ import {
 
 import { InteractiveSurface } from '@/components/InteractiveSurface';
 import { PrototypeTabScreen } from '@/components/prototype/PrototypeShell';
+import { useReward } from '@/features/rewards/RewardContext';
 import { colors, typography } from '@/theme';
 
 import { QuizExperience } from './QuizExperience';
@@ -18,7 +19,9 @@ import {
   advanceQuiz,
   answerQuizQuestion,
   createEmptyQuizProgress,
+  getQuizScore,
   getQuizScrollResetKey,
+  isQuizComplete,
   restartQuiz,
   type QuizProgress,
 } from './quiz-model';
@@ -52,6 +55,7 @@ export function QuizScreenController({
   onOpenChecker: () => void;
   persistence: QuizPersistenceCoordinatorPort;
 }) {
+  const reward = useReward();
   const [progress, setProgress] = useState<QuizProgress>(() => createEmptyQuizProgress());
   const [loading, setLoading] = useState(true);
   const [retryPending, setRetryPending] = useState(false);
@@ -229,11 +233,19 @@ export function QuizScreenController({
       <QuizExperience
         disabled={disabled}
         mascotSource={mascotSource}
-        onAdvance={() => updateProgress(advanceQuiz(progress))}
+        onAdvance={() => {
+          const next = advanceQuiz(progress);
+          if (isQuizComplete(next) && getQuizScore(next) === 5) reward.unlock('quiz-perfect');
+          updateProgress(next);
+        }}
         onAnswer={(optionId) => updateProgress(answerQuizQuestion(progress, optionId))}
         onOpenChecker={onOpenChecker}
-        onRetry={() => updateProgress(restartQuiz(progress))}
+        onRetry={() => {
+          reward.clearEligibility('quiz-perfect');
+          updateProgress(restartQuiz(progress));
+        }}
         progress={progress}
+        rewardUnlocked={reward.eligibility === 'quiz-perfect'}
       />
     </PrototypeTabScreen>
   );

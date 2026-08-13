@@ -16,6 +16,8 @@ import type { ReportSubmissionResponse } from '@vbyg/contracts';
 
 import { InteractiveSurface } from '@/components/InteractiveSurface';
 import { PrototypeTabScreen } from '@/components/prototype/PrototypeShell';
+import { useReward } from '@/features/rewards/RewardContext';
+import { RewardUnlockCard } from '@/features/rewards/RewardUnlockCard';
 import { colors, typography } from '@/theme';
 
 import { useReportSubmission } from './ReportSubmissionContext';
@@ -34,6 +36,7 @@ const webRibbonGradient = Platform.select({
 
 export function ReportReceiptScreen() {
   const submission = useReportSubmission();
+  const reward = useReward();
   if (!submission.receipt) {
     return (
       <MissingReceiptExperience
@@ -46,6 +49,7 @@ export function ReportReceiptScreen() {
     <ReportReceiptExperience
       onViewStatus={() => router.replace('/reports')}
       receipt={submission.receipt}
+      rewardUnlocked={reward.eligibility === 'private-report-submitted'}
       retentionNotice={submission.retentionNotice}
     />
   );
@@ -54,10 +58,12 @@ export function ReportReceiptScreen() {
 export function ReportReceiptExperience({
   onViewStatus,
   receipt,
+  rewardUnlocked = false,
   retentionNotice,
 }: {
   onViewStatus: () => void;
   receipt: ReportSubmissionResponse;
+  rewardUnlocked?: boolean;
   retentionNotice?: string;
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -184,6 +190,15 @@ export function ReportReceiptExperience({
             <Text style={styles.secondaryButtonText}>{downloaded ? 'Recovery key downloaded' : 'Download recovery key'}</Text>
           </InteractiveSurface>
         ) : null}
+        {copyState === 'failed' ? (
+          <Text accessibilityLiveRegion="assertive" style={styles.copyError} testID="report-copy-recovery-error">Copy failed. Select the recovery key above and save it manually.</Text>
+        ) : null}
+        {rewardUnlocked ? (
+          <RewardUnlockCard
+            description="Your private report reached the backend. Received — not yet reviewed. This does not mean it was verified, judged true or made public."
+            title="Thank you for contributing — voucher unlocked"
+          />
+        ) : null}
         <InteractiveSurface
           accessibilityLabel="View private report status"
           accessibilityRole="link"
@@ -197,9 +212,6 @@ export function ReportReceiptExperience({
           <Text style={styles.statusLinkText}>View report status</Text>
           <Ionicons color={colors.blue} name="chevron-forward" size={18} />
         </InteractiveSurface>
-        {copyState === 'failed' ? (
-          <Text accessibilityLiveRegion="assertive" style={styles.copyError}>Copy failed. Select the recovery key above and save it manually.</Text>
-        ) : null}
       </View>
     </PrototypeTabScreen>
   );

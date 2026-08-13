@@ -26,10 +26,11 @@ const applicationScreens = [
   ['My Reports', 'app/(tabs)/reports/index.tsx'],
   ['Help and Emergency Contacts', 'app/(tabs)/help.tsx'],
   ['How It Works', 'app/(tabs)/how-it-works.tsx'],
+  ['Demo Voucher Reward', 'app/(tabs)/rewards/voucher.tsx'],
 ] as const;
 
-test('CP16 exposes all 19 implemented application screens without route placeholders', () => {
-  assert.equal(applicationScreens.length, 19);
+test('the release manifest exposes all 20 implemented application screens without route placeholders', () => {
+  assert.equal(applicationScreens.length, 20);
 
   for (const [name, relativePath] of applicationScreens) {
     const routeUrl = new URL(relativePath, frontendRoot);

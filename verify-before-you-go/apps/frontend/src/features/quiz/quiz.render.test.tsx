@@ -1,4 +1,11 @@
-import { act, useState, type ReactNode } from 'react';
+import {
+  act,
+  cloneElement,
+  isValidElement,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -17,6 +24,15 @@ import {
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: function MockIonicons() { return null; },
+}));
+
+vi.mock('expo-router', () => ({
+  Link: function MockLink({ asChild, children, href }: { asChild?: boolean; children: ReactNode; href: string }) {
+    if (asChild && isValidElement(children)) {
+      return cloneElement(children as ReactElement<Record<string, unknown>>, { href });
+    }
+    return <a href={href}>{children}</a>;
+  },
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -205,12 +221,13 @@ describe('CP08 rendered quiz interactions', () => {
 
   it('resets the 360x800 ScrollView only for Next, completion and retry transitions', async () => {
     const originalScroll = HTMLElement.prototype.scroll;
+    function mockScroll(this: HTMLElement, options: ScrollToOptions | number, y?: number) {
+      this.scrollTop = typeof options === 'number' ? (y ?? 0) : (options.top ?? 0);
+    }
     Object.defineProperty(HTMLElement.prototype, 'scroll', {
       configurable: true,
       writable: true,
-      value(options: ScrollToOptions | number, y?: number) {
-        this.scrollTop = typeof options === 'number' ? (y ?? 0) : (options.top ?? 0);
-      },
+      value: mockScroll,
     });
     const harness = await renderScrollQuiz();
     const scrollView = harness.container.querySelector<HTMLElement>('[data-testid="vbyg-vertical-scroll"]');

@@ -50,7 +50,7 @@ const primaryTabHrefs = {
 
 export function getPrimaryTabRouteName(routeName: string | undefined) {
   if (!routeName) return undefined;
-  if (routeName === 'index' || routeName === 'how-it-works') return 'index';
+  if (routeName === 'index' || routeName === 'how-it-works' || routeName === 'rewards') return 'index';
   return primaryTabRouteNames.find((name) => name !== 'index' && (
     routeName === name || routeName.startsWith(`${name}/`)
   ));
@@ -118,6 +118,10 @@ export default function TabLayout() {
         name="share"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="rewards"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }
@@ -155,7 +159,9 @@ export function FloatingTabBar({ descriptors, navigation, state }: FloatingTabBa
           const options = descriptors[route.key]?.options;
           const icon = tabIcons[route.name] ?? 'ellipse-outline';
           const accessibilityLabel = options?.tabBarAccessibilityLabel ?? options?.title ?? route.name;
-          const isHowItWorksHomeParent = currentRouteName === 'how-it-works' && route.name === 'index';
+          const isHomeParentSubroute = (
+            currentRouteName === 'how-it-works' || currentRouteName === 'rewards'
+          ) && route.name === 'index';
 
           const navigate = () => {
             const event = navigation.emit({
@@ -163,7 +169,7 @@ export function FloatingTabBar({ descriptors, navigation, state }: FloatingTabBa
               target: route.key,
               canPreventDefault: true,
             });
-            if ((!focused || isHowItWorksHomeParent) && !event.defaultPrevented) {
+            if ((!focused || isHomeParentSubroute) && !event.defaultPrevented) {
               navigation.navigate(route.name, route.params);
             }
           };

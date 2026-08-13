@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 
 import { InteractiveSurface } from '@/components/InteractiveSurface';
+import { RewardUnlockCard } from '@/features/rewards/RewardUnlockCard';
 import { colors, typography } from '@/theme';
 
 import { MIL_QUIZ_QUESTIONS, type QuizOption } from './quiz-content';
@@ -29,6 +30,7 @@ type QuizExperienceProps = {
   onOpenChecker: () => void;
   onRetry: () => void;
   progress: QuizProgress;
+  rewardUnlocked?: boolean;
   focusOption?: (optionId: string) => void;
   webKeyboardEnabled?: boolean;
 };
@@ -42,6 +44,7 @@ export function QuizExperience({
   onOpenChecker,
   onRetry,
   progress,
+  rewardUnlocked = false,
   webKeyboardEnabled = Platform.OS === 'web',
 }: QuizExperienceProps) {
   const complete = isQuizComplete(progress);
@@ -67,6 +70,18 @@ export function QuizExperience({
           <Text style={styles.transferTitle}>Take the habit with you</Text>
           <Text style={styles.transferCopy}>Pause, identify the claim, and check it through a source you found independently.</Text>
         </View>
+        {score === 5 && rewardUnlocked ? (
+          <RewardUnlockCard
+            description="You completed all five MIL topics in this practice with a perfect score."
+            title="Perfect score — voucher unlocked"
+          />
+        ) : null}
+        {score < 5 ? (
+          <View style={styles.retryEncouragement} testID="quiz-reward-locked">
+            <Text style={styles.retryEncouragementTitle}>Keep practising at your own pace.</Text>
+            <Text style={styles.retryEncouragementText}>The demo voucher stays locked below 5/5. Try again whenever you want to revisit the five topics.</Text>
+          </View>
+        ) : null}
         <PrimaryButton disabled={disabled} label="Try all five again" onPress={onRetry} testID="quiz-retry" />
         <LinkButton disabled={disabled} label="Open the Offer Checker" onPress={onOpenChecker} testID="quiz-open-checker" />
       </View>
@@ -401,4 +416,7 @@ const styles = StyleSheet.create({
   scoreMeta: { color: colors.paleBlue, fontFamily: typography.mono, fontSize: 11, lineHeight: 16, letterSpacing: 1, textTransform: 'uppercase' },
   scoreValue: { color: colors.paper, fontFamily: typography.heading, fontSize: 34, fontWeight: '700', lineHeight: 39 },
   scoreCopy: { color: '#D6E9FA', fontFamily: typography.body, fontSize: 13, lineHeight: 20 },
+  retryEncouragement: { gap: 4, padding: 12, borderWidth: 1, borderColor: '#D6E9FA', borderRadius: 12, backgroundColor: colors.ice },
+  retryEncouragementTitle: { color: colors.navy, fontFamily: typography.bodySemiBold, fontSize: 14, lineHeight: 20 },
+  retryEncouragementText: { color: colors.body, fontFamily: typography.body, fontSize: 13, lineHeight: 20 },
 });

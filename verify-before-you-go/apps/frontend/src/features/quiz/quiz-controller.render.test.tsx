@@ -2,6 +2,8 @@ import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
+import { RewardProvider } from '@/features/rewards/RewardContext';
+
 import { MIL_QUIZ_QUESTIONS } from './quiz-content';
 import {
   answerQuizQuestion,
@@ -109,11 +111,13 @@ async function mountController(persistence: QuizPersistenceCoordinator): Promise
   const root = createRoot(container);
   await act(async () => {
     root.render(
-      <QuizScreenController
-        mascotSource={{ uri: 'quiz-insight-v3.png' }}
-        onOpenChecker={() => undefined}
-        persistence={persistence}
-      />,
+      <RewardProvider>
+        <QuizScreenController
+          mascotSource={{ uri: 'quiz-insight-v3.png' }}
+          onOpenChecker={() => undefined}
+          persistence={persistence}
+        />
+      </RewardProvider>,
     );
   });
   return { container, root };

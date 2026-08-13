@@ -10,6 +10,7 @@ import { colors } from '@/theme';
 import { OfferDraftProvider } from '@/features/offer-intake/OfferDraftContext';
 import { ReportDraftProvider } from '@/features/reports/ReportDraftContext';
 import { ReportSubmissionProvider } from '@/features/reports/ReportSubmissionContext';
+import { RewardProvider } from '@/features/rewards/RewardContext';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -37,18 +38,20 @@ export default function RootLayout() {
     <SafeAreaProvider style={styles.root}>
       <OfferDraftProvider>
         <ReportDraftProvider>
-          <ReportSubmissionProvider>
-            <StatusBar style="dark" />
-            <Stack
-              screenOptions={{
-                animation: 'fade',
-                contentStyle: { backgroundColor: colors.canvas },
-                headerShown: false,
-              }}
-            >
-              <Stack.Screen name="(tabs)" />
-            </Stack>
-          </ReportSubmissionProvider>
+          <RewardProvider>
+            <ReportSubmissionProvider>
+              <StatusBar style="dark" />
+              <Stack
+                screenOptions={{
+                  animation: 'fade',
+                  contentStyle: { backgroundColor: colors.canvas },
+                  headerShown: false,
+                }}
+              >
+                <Stack.Screen name="(tabs)" />
+              </Stack>
+            </ReportSubmissionProvider>
+          </RewardProvider>
         </ReportDraftProvider>
       </OfferDraftProvider>
     </SafeAreaProvider>
